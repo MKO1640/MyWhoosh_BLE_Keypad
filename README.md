@@ -5,8 +5,9 @@ Dieses Projekt implementiert ein BLE-Keypad auf Basis eines ESP32/ESP32-C3, um d
 ## Features
 
 - **BLE-Tastatur-Emulation**: Funktioniert als drahtloses Keypad für MYWhoosh
+- **Bluetooth-LED (BLE LED)**: Statusanzeige für Bluetooth-Verbindung (Pin und Logik konfigurierbar)
 - **Mehrfachbelegung pro Taste**: Normalklick, Doppelklick, Langklick je GPIO
-- **Konfigurierbar**: Tasten, Modi und Zeiten über `config.json` einstellbar
+- **Konfigurierbar**: Tasten, Modi, Zeiten und BLE LED über `config.json` einstellbar
 - **Kompatibel mit ESP32 und ESP32-C3**
 - **Einfache Anpassung**: Keine Programmierkenntnisse für Tastenbelegung nötig
 
@@ -33,9 +34,10 @@ Dieses Projekt implementiert ein BLE-Keypad auf Basis eines ESP32/ESP32-C3, um d
 5. **Konfiguration im Web-Browser**
    - Nach dem ersten Start (oder wenn keine WLAN-Verbindung möglich ist) öffnet das Gerät ein WLAN namens `Keypad-Config` (Captive Portal).
    - Mit Smartphone/PC verbinden und im Browser `http://192.168.4.1` aufrufen.
-   - Die Konfiguration (WLAN, BLE-Name, Buttons etc.) kann komfortabel im Web-Formular angepasst werden.
+   - Die Konfiguration (WLAN, BLE-Name, Buttons, **Bluetooth-LED**) kann komfortabel im Web-Formular angepasst werden.
    - Nach Speichern und Neustart verbindet sich das Gerät mit dem eingestellten WLAN. Die Konfiguration ist dann auch über die zugewiesene IP im Heimnetz erreichbar (siehe Serieller Monitor).
    - **Tipp:** Die aktuelle IP und Debug-Infos werden im seriellen Monitor ausgegeben.
+   - **Bluetooth-LED:** Die LED zeigt den Status der Bluetooth-Verbindung an. Pin und Logik (invertiert/nicht invertiert) sind in der Konfiguration einstellbar. Die LED blinkt langsam bei Wartezustand, schnell nach Verbindungsabbruch und leuchtet dauerhaft bei aktiver Verbindung.
 6. **Mit MYWhoosh koppeln**
    - Das Keypad erscheint als BLE-Tastatur (Name konfigurierbar)
 

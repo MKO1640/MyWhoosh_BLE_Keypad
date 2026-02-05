@@ -63,6 +63,8 @@ const char* configEditorHTML = R"rawliteral(
   <label>WLAN Passwort: <input id='wifi_pass' name='wifi_pass' type='password'></label>
   <label>Doppelklick-Zeit (ms): <input id='doubleClickTime' name='doubleClickTime' type='number'></label>
   <label>Langklick-Zeit (ms): <input id='longPressTime' name='longPressTime' type='number'></label>
+  <label>BLE LED Pin: <input id='ble_led_pin' name='ble_led_pin' type='number'></label>
+  <label>BLE LED invertieren: <input id='ble_led_invert' name='ble_led_invert' type='checkbox'></label>
 
   <h3>Buttons</h3>
   <div id='button-list' class='button-list'></div>
@@ -104,6 +106,8 @@ function updateButton(idx, key, value) {
 }
 function addButton() {
   config.buttons.push({pin:0,key_normal:"",key_double:"",key_long:"",mode:"pullup",debounce:100});
+  document.getElementById('ble_led_pin').value = config.ble_led_pin||'';
+  document.getElementById('ble_led_invert').checked = !!config.ble_led_invert;
   renderButtons();
 }
 function removeButton(idx) {
@@ -124,6 +128,8 @@ function saveCfg() {
   config.wifi_pass = document.getElementById('wifi_pass').value;
   config.doubleClickTime = parseInt(document.getElementById('doubleClickTime').value)||400;
   config.longPressTime = parseInt(document.getElementById('longPressTime').value)||800;
+  config.ble_led_pin = parseInt(document.getElementById('ble_led_pin').value)||-1;
+  config.ble_led_invert = document.getElementById('ble_led_invert').checked;
   fetch('/save', {method:'POST', body:JSON.stringify(config)}).then(r=>r.text()).then(t=>msg.innerText=t);
 }
 fetch('/config.json').then(r=>r.json()).then(j=>{config=j;if(!config.buttons)config.buttons=[];fillForm();});
@@ -158,6 +164,8 @@ BleKeyboard bleKeyboard;
 unsigned long doubleClickTime = 400; // ms
 unsigned long longPressTime = 800; // ms
 
+int bleLedPin = -1;
+bool bleLedInvert = false;
 void loadConfig() {
     Serial.print("[DEBUG] WLAN SSID: ");
     Serial.println(wifiSSID);
@@ -193,6 +201,16 @@ void loadConfig() {
   }
   if (doc.containsKey("wifi_pass")) {
     wifiPASS = doc["wifi_pass"].as<String>();
+  }
+  if (doc.containsKey("ble_led_pin")) {
+    bleLedPin = doc["ble_led_pin"].as<int>();
+  } else {
+    bleLedPin = -1;
+  }
+  if (doc.containsKey("ble_led_invert")) {
+    bleLedInvert = doc["ble_led_invert"].as<bool>();
+  } else {
+    bleLedInvert = false;
   }
   buttonCount = doc["buttons"].size();
   for (int i = 0; i < buttonCount; i++) {
@@ -385,6 +403,14 @@ void setup() {
     }
   }
   Serial.println("[DEBUG] Alle Pins initialisiert");
+  if (bleLedPin >= 0 && bleLedPin <= 39) {
+    pinMode(bleLedPin, OUTPUT);
+    digitalWrite(bleLedPin, bleLedInvert ? HIGH : LOW);
+    Serial.print("[DEBUG] BLE LED Pin initialisiert: ");
+    Serial.println(bleLedPin);
+    Serial.print("[DEBUG] BLE LED invertiert: ");
+    Serial.println(bleLedInvert ? "true" : "false");
+  }
   bleKeyboard.setName(bleName.c_str());
   Serial.println("[DEBUG] BLE-Name gesetzt");
   bleKeyboard.begin();
@@ -394,6 +420,11 @@ void setup() {
   Serial.println(")");
 }
 
+unsigned long bleLedLastToggle = 0;
+bool bleLedState = false;
+bool bleWasConnected = false;
+unsigned long bleDisconnectTime = 0;
+bool bleFastBlinkActive = false;
 void loop() {
     if (webserverActive) {
       server.handleClient();
@@ -406,8 +437,40 @@ void loop() {
       }
     }
 
+  unsigned long now = millis();
+  // Bluetooth LED Status blinken
+  if (bleLedPin >= 0 && bleLedPin <= 39) {
+    auto ledWrite = [&](bool on) {
+      digitalWrite(bleLedPin, bleLedInvert ? !on : on);
+    };
+    if (bleKeyboard.isConnected()) {
+      ledWrite(true); // LED dauerhaft an bei Verbindung
+      bleWasConnected = true;
+      bleFastBlinkActive = false;
+    } else {
+      if (bleWasConnected) {
+        bleDisconnectTime = now;
+        bleFastBlinkActive = true;
+        bleWasConnected = false;
+      }
+      // blinke für 5 secunden nach einem Disconnect schnell, danach wieder langsam
+      if (bleFastBlinkActive && (now - bleDisconnectTime < 5000)) {
+        if (now - bleLedLastToggle > 100) { // schnell blinken (10Hz)
+          bleLedState = !bleLedState;
+          ledWrite(bleLedState);
+          bleLedLastToggle = now;
+        }
+      } else {
+        bleFastBlinkActive = false;
+        if (now - bleLedLastToggle > 500) { // langsam blinken (1Hz) wenn nicht verbunden 
+          bleLedState = !bleLedState;
+          ledWrite(bleLedState);
+          bleLedLastToggle = now;
+        }
+      }
+    }
+  }
   if (bleKeyboard.isConnected()) {
-    unsigned long now = millis();
     for (int i = 0; i < buttonCount; i++) {
       int pinState = digitalRead(buttons[i].pin);
       switch (buttons[i].state) {
