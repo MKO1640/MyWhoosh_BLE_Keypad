@@ -120,6 +120,8 @@ function fillForm() {
   document.getElementById('wifi_pass').value = config.wifi_pass||'';
   document.getElementById('doubleClickTime').value = config.doubleClickTime||400;
   document.getElementById('longPressTime').value = config.longPressTime||800;
+  document.getElementById('ble_led_pin').value = config.ble_led_pin||'';
+  document.getElementById('ble_led_invert').checked = !!config.ble_led_invert;
   renderButtons();
 }
 function saveCfg() {
