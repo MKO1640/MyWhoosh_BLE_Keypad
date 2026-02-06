@@ -1,9 +1,4 @@
-// Timeout-Logik für Webserver
-unsigned long webserverStartTime = 0;
-unsigned long lastWebRequestTime = 0;
-bool webserverActive = false;
-const unsigned long WEBSERVER_TIMEOUT = 600000; // 10 Minuten
-
+// Webserver und BLE Libraries
 #include <ArduinoJson.h>
 #include <FS.h>
 #include <LittleFS.h>
@@ -13,6 +8,20 @@ const unsigned long WEBSERVER_TIMEOUT = 600000; // 10 Minuten
 #include <DNSServer.h>
 #include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
 #include <BleKeyboard.h>
+
+// Timeout-Logik für Webserver
+unsigned long webserverStartTime = 0;
+unsigned long lastWebRequestTime = 0;
+bool webserverActive = false;
+const unsigned long WEBSERVER_TIMEOUT = 600000; // 10 Minuten
+
+// Learn Mode Variablen
+bool learnModeActive = false;
+int learnModeButtonIndex = -1;
+int detectedPin = -1;
+unsigned long learnModeTimeout = 0;
+const unsigned long LEARN_MODE_TIMEOUT = 10000; // 10 Sekunden
+
 WebServer server(80);
 WiFiManager wm;
 
@@ -36,106 +45,72 @@ bool saveConfigString(const String& json) {
   return true;
 }
 
-// HTML Editor Seite mit Formular und dynamischer Button-Liste
-const char* configEditorHTML = R"rawliteral(
+// HTML Editor Seite - Minimale Version für Testing
+const char* htmlContent = "<h1>Test</h1>";
+
+// Webserver Routes registrieren
+void registerWebServerRoutes() {
+  const char* htmlPage = R"html(
 <!DOCTYPE html>
-<html lang='de'>
-<head>
-  <meta charset='UTF-8'>
-  <title>Keypad Config Editor</title>
-  <style>
-    body { font-family: sans-serif; max-width: 800px; margin: 2em auto; background: #f8f8f8; }
-    h2 { color: #333; }
-    label { display: block; margin-top: 1em; }
-    input, select { margin: 0.2em 0 0.5em 0; padding: 0.2em; }
-    .button-list { margin: 1em 0; }
-    .button-entry { background: #fff; border: 1px solid #ccc; padding: 1em; margin-bottom: 0.5em; border-radius: 6px; }
-    .remove-btn { background: #e74c3c; color: #fff; border: none; padding: 0.3em 0.8em; border-radius: 4px; cursor: pointer; float: right; }
-    .add-btn { background: #27ae60; color: #fff; border: none; padding: 0.5em 1em; border-radius: 4px; cursor: pointer; margin-top: 1em; }
-    #msg { margin-top: 1em; color: #2980b9; }
-  </style>
-</head>
-<body>
-<h2>Keypad Konfiguration</h2>
-<form id='cfgform' onsubmit='event.preventDefault(); saveCfg();'>
-  <label>BLE Name: <input id='ble_name' name='ble_name'></label>
-  <label>WLAN SSID: <input id='wifi_ssid' name='wifi_ssid'></label>
-  <label>WLAN Passwort: <input id='wifi_pass' name='wifi_pass' type='password'></label>
-  <label>Doppelklick-Zeit (ms): <input id='doubleClickTime' name='doubleClickTime' type='number'></label>
-  <label>Langklick-Zeit (ms): <input id='longPressTime' name='longPressTime' type='number'></label>
-  <label>BLE LED Pin: <input id='ble_led_pin' name='ble_led_pin' type='number'></label>
-  <label>BLE LED invertieren: <input id='ble_led_invert' name='ble_led_invert' type='checkbox'></label>
+<html><head><title>Config</title></head><body>
+<h1>Keypad Config</h1>
+<form><input type="text"><button>Save</button></form>
+</body></html>
+)html";
 
-  <h3>Buttons</h3>
-  <div id='button-list' class='button-list'></div>
-  <button type='button' class='add-btn' onclick='addButton()'>Button hinzufügen</button>
-  <br><br>
-  <button type='submit'>Speichern</button>
-</form>
-<div id='msg'></div>
-<script>
-let config = {};
-let buttonList = document.getElementById('button-list');
-
-function renderButtons() {
-  buttonList.innerHTML = '';
-  config.buttons.forEach((btn, idx) => {
-    let div = document.createElement('div');
-    div.className = 'button-entry';
-    div.innerHTML = `
-      <button type='button' class='remove-btn' onclick='removeButton(${idx})'>Entfernen</button>
-      <b>Button ${idx+1}</b><br>
-      Pin: <input type='number' value='${btn.pin}' onchange='updateButton(${idx},"pin",this.value)'>
-      Key normal: <input maxlength='1' value='${btn.key_normal||""}' onchange='updateButton(${idx},"key_normal",this.value)'>
-      Key double: <input maxlength='1' value='${btn.key_double||""}' onchange='updateButton(${idx},"key_double",this.value)'>
-      Key long: <input maxlength='1' value='${btn.key_long||""}' onchange='updateButton(${idx},"key_long",this.value)'>
-      Mode: <select onchange='updateButton(${idx},"mode",this.value)'>
-        <option value='pullup' ${btn.mode=="pullup"?"selected":""}>pullup</option>
-        <option value='pulldown' ${btn.mode=="pulldown"?"selected":""}>pulldown</option>
-        <option value='input' ${btn.mode=="input"?"selected":""}>input</option>
-      </select>
-      Debounce: <input type='number' value='${btn.debounce||100}' onchange='updateButton(${idx},"debounce",this.value)'>
-    `;
-    buttonList.appendChild(div);
+  server.on("/", [htmlPage]() {
+    lastWebRequestTime = millis();
+    Serial.println("[DEBUG] HTTP GET /");
+    server.send(200, "text/html", htmlPage);
+  });
+  server.on("/config.json", []() {
+    lastWebRequestTime = millis();
+    Serial.println("[DEBUG] HTTP GET /config.json");
+    server.send(200, "application/json", loadConfigString());
+  });
+  server.on("/save", HTTP_POST, []() {
+    lastWebRequestTime = millis();
+    Serial.println("[DEBUG] HTTP POST /save");
+    String body = server.arg("plain");
+    if (saveConfigString(body)) {
+      Serial.println("[DEBUG] config.json gespeichert!");
+      server.send(200, "text/plain", "Gespeichert!");
+    } else {
+      Serial.println("[DEBUG] Fehler beim Speichern von config.json!");
+      server.send(500, "text/plain", "Fehler beim Speichern!");
+    }
+  });
+  server.on("/learn_start", HTTP_POST, []() {
+    lastWebRequestTime = millis();
+    String body = server.arg("plain");
+    StaticJsonDocument<256> doc;
+    deserializeJson(doc, body);
+    learnModeButtonIndex = doc["buttonIndex"].as<int>();
+    learnModeActive = true;
+    detectedPin = -1;
+    learnModeTimeout = millis();
+    Serial.print("[DEBUG] Learn Mode gestartet für Button ");
+    Serial.println(learnModeButtonIndex);
+    server.send(200, "text/plain", "Learn Mode aktiv");
+  });
+  server.on("/learn_status", []() {
+    lastWebRequestTime = millis();
+    StaticJsonDocument<128> doc;
+    doc["active"] = learnModeActive;
+    doc["detected_pin"] = detectedPin;
+    String response;
+    serializeJson(doc, response);
+    server.send(200, "application/json", response);
+  });
+  server.on("/learn_stop", HTTP_POST, []() {
+    lastWebRequestTime = millis();
+    learnModeActive = false;
+    learnModeButtonIndex = -1;
+    detectedPin = -1;
+    Serial.println("[DEBUG] Learn Mode beendet");
+    server.send(200, "text/plain", "Learn Mode gestoppt");
   });
 }
-
-function updateButton(idx, key, value) {
-  if(key=="pin"||key=="debounce") value = parseInt(value)||0;
-  config.buttons[idx][key] = value;
-}
-function addButton() {
-  config.buttons.push({pin:0,key_normal:"",key_double:"",key_long:"",mode:"pullup",debounce:100});
-  document.getElementById('ble_led_pin').value = config.ble_led_pin||'';
-  document.getElementById('ble_led_invert').checked = !!config.ble_led_invert;
-  renderButtons();
-}
-function removeButton(idx) {
-  config.buttons.splice(idx,1);
-  renderButtons();
-}
-function fillForm() {
-  document.getElementById('ble_name').value = config.ble_name||'';
-  document.getElementById('wifi_ssid').value = config.wifi_ssid||'';
-  document.getElementById('wifi_pass').value = config.wifi_pass||'';
-  document.getElementById('doubleClickTime').value = config.doubleClickTime||400;
-  document.getElementById('longPressTime').value = config.longPressTime||800;
-  renderButtons();
-}
-function saveCfg() {
-  config.ble_name = document.getElementById('ble_name').value;
-  config.wifi_ssid = document.getElementById('wifi_ssid').value;
-  config.wifi_pass = document.getElementById('wifi_pass').value;
-  config.doubleClickTime = parseInt(document.getElementById('doubleClickTime').value)||400;
-  config.longPressTime = parseInt(document.getElementById('longPressTime').value)||800;
-  config.ble_led_pin = parseInt(document.getElementById('ble_led_pin').value)||-1;
-  config.ble_led_invert = document.getElementById('ble_led_invert').checked;
-  fetch('/save', {method:'POST', body:JSON.stringify(config)}).then(r=>r.text()).then(t=>msg.innerText=t);
-}
-fetch('/config.json').then(r=>r.json()).then(j=>{config=j;if(!config.buttons)config.buttons=[];fillForm();});
-</script>
-</body></html>
-)rawliteral";
 
 
 enum ButtonState { BTN_IDLE, BTN_DEBOUNCE, BTN_PRESSED, BTN_WAIT_DOUBLE, BTN_LONG, BTN_RELEASED };
@@ -304,29 +279,8 @@ void setup() {
       Serial.println(ap ? "OK" : "Fehler");
       Serial.print("[DEBUG] AP-IP: ");
       Serial.println(WiFi.softAPIP());
-      // Webserver Endpunkte
-      server.on("/", []() {
-        lastWebRequestTime = millis();
-        Serial.println("[DEBUG] HTTP GET /");
-        server.send(200, "text/html", configEditorHTML);
-      });
-      server.on("/config.json", []() {
-        lastWebRequestTime = millis();
-        Serial.println("[DEBUG] HTTP GET /config.json");
-        server.send(200, "application/json", loadConfigString());
-      });
-      server.on("/save", HTTP_POST, []() {
-        lastWebRequestTime = millis();
-        Serial.println("[DEBUG] HTTP POST /save");
-        String body = server.arg("plain");
-        if (saveConfigString(body)) {
-          Serial.println("[DEBUG] config.json gespeichert!");
-          server.send(200, "text/plain", "Gespeichert!");
-        } else {
-          Serial.println("[DEBUG] Fehler beim Speichern von config.json!");
-          server.send(500, "text/plain", "Fehler beim Speichern!");
-        }
-      });
+      // Webserver Endpunkte registrieren
+      registerWebServerRoutes();
       server.begin();
       webserverStartTime = millis();
       lastWebRequestTime = millis();
@@ -336,28 +290,7 @@ void setup() {
       Serial.print("[DEBUG] WLAN verbunden: ");
       Serial.println(WiFi.localIP());
       // Webserver für lokale Bearbeitung (optional)
-      server.on("/", []() {
-        lastWebRequestTime = millis();
-        Serial.println("[DEBUG] HTTP GET /");
-        server.send(200, "text/html", configEditorHTML);
-      });
-      server.on("/config.json", []() {
-        lastWebRequestTime = millis();
-        Serial.println("[DEBUG] HTTP GET /config.json");
-        server.send(200, "application/json", loadConfigString());
-      });
-      server.on("/save", HTTP_POST, []() {
-        lastWebRequestTime = millis();
-        Serial.println("[DEBUG] HTTP POST /save");
-        String body = server.arg("plain");
-        if (saveConfigString(body)) {
-          Serial.println("[DEBUG] config.json gespeichert!");
-          server.send(200, "text/plain", "Gespeichert!");
-        } else {
-          Serial.println("[DEBUG] Fehler beim Speichern von config.json!");
-          server.send(500, "text/plain", "Fehler beim Speichern!");
-        }
-      });
+      registerWebServerRoutes();
       server.begin();
       webserverStartTime = millis();
       lastWebRequestTime = millis();
@@ -470,7 +403,26 @@ void loop() {
       }
     }
   }
-  if (bleKeyboard.isConnected()) {
+
+  // Learn Mode: Alle Pins scannen
+  if (learnModeActive && millis() - learnModeTimeout < LEARN_MODE_TIMEOUT) {
+    for (int pin = 0; pin <= 39; pin++) {
+      if (detectedPin < 0) { // Noch kein Pin erkannt
+        pinMode(pin, INPUT_PULLUP);
+        delay(10);
+        int state = digitalRead(pin);
+        if (state == LOW) {
+          detectedPin = pin;
+          Serial.print("[DEBUG] Learn Mode: Pin ");
+          Serial.print(pin);
+          Serial.println(" erkannt!");
+          break;
+        }
+      }
+    }
+  }
+
+  if (bleKeyboard.isConnected() && !learnModeActive) {
     for (int i = 0; i < buttonCount; i++) {
       int pinState = digitalRead(buttons[i].pin);
       switch (buttons[i].state) {
