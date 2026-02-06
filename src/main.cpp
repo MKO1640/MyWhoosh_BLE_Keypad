@@ -132,7 +132,14 @@ function saveCfg() {
   config.longPressTime = parseInt(document.getElementById('longPressTime').value)||800;
   config.ble_led_pin = parseInt(document.getElementById('ble_led_pin').value)||-1;
   config.ble_led_invert = document.getElementById('ble_led_invert').checked;
-  fetch('/save', {method:'POST', body:JSON.stringify(config)}).then(r=>r.text()).then(t=>msg.innerText=t);
+  fetch('/save', {method:'POST', body:JSON.stringify(config)}).then(r=>r.text()).then(t=>{
+    msg.innerText = t;
+    setTimeout(() => {
+      if (confirm('Konfiguration gespeichert!\nSoll das Gerät jetzt neu gestartet werden?')) {
+        fetch('/restart', {method:'POST'});
+      }
+    }, 500);
+  });
 }
 fetch('/config.json').then(r=>r.json()).then(j=>{config=j;if(!config.buttons)config.buttons=[];fillForm();});
 </script>
