@@ -13,6 +13,7 @@ const unsigned long WEBSERVER_TIMEOUT = 600000; // 10 Minuten
 #include <DNSServer.h>
 #include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
 #include <BleKeyboard.h>
+#include "webUI.h"
 WebServer server(80);
 WiFiManager wm;
 
@@ -35,116 +36,6 @@ bool saveConfigString(const String& json) {
   file.close();
   return true;
 }
-
-// HTML Editor Seite mit Formular und dynamischer Button-Liste
-const char* configEditorHTML = R"rawliteral(
-<!DOCTYPE html>
-<html lang='de'>
-<head>
-  <meta charset='UTF-8'>
-  <title>Keypad Config Editor</title>
-  <style>
-    body { font-family: sans-serif; max-width: 800px; margin: 2em auto; background: #f8f8f8; }
-    h2 { color: #333; }
-    label { display: block; margin-top: 1em; }
-    input, select { margin: 0.2em 0 0.5em 0; padding: 0.2em; }
-    .button-list { margin: 1em 0; }
-    .button-entry { background: #fff; border: 1px solid #ccc; padding: 1em; margin-bottom: 0.5em; border-radius: 6px; }
-    .remove-btn { background: #e74c3c; color: #fff; border: none; padding: 0.3em 0.8em; border-radius: 4px; cursor: pointer; float: right; }
-    .add-btn { background: #27ae60; color: #fff; border: none; padding: 0.5em 1em; border-radius: 4px; cursor: pointer; margin-top: 1em; }
-    #msg { margin-top: 1em; color: #2980b9; }
-  </style>
-</head>
-<body>
-<h2>Keypad Konfiguration</h2>
-<form id='cfgform' onsubmit='event.preventDefault(); saveCfg();'>
-  <label>BLE Name: <input id='ble_name' name='ble_name'></label>
-  <label>WLAN SSID: <input id='wifi_ssid' name='wifi_ssid'></label>
-  <label>WLAN Passwort: <input id='wifi_pass' name='wifi_pass' type='password'></label>
-  <label>Doppelklick-Zeit (ms): <input id='doubleClickTime' name='doubleClickTime' type='number'></label>
-  <label>Langklick-Zeit (ms): <input id='longPressTime' name='longPressTime' type='number'></label>
-  <label>BLE LED Pin: <input id='ble_led_pin' name='ble_led_pin' type='number'></label>
-  <label>BLE LED invertieren: <input id='ble_led_invert' name='ble_led_invert' type='checkbox'></label>
-
-  <h3>Buttons</h3>
-  <div id='button-list' class='button-list'></div>
-  <button type='button' class='add-btn' onclick='addButton()'>Button hinzufügen</button>
-  <br><br>
-  <button type='submit'>Speichern</button>
-</form>
-<div id='msg'></div>
-<script>
-let config = {};
-let buttonList = document.getElementById('button-list');
-
-function renderButtons() {
-  buttonList.innerHTML = '';
-  config.buttons.forEach((btn, idx) => {
-    let div = document.createElement('div');
-    div.className = 'button-entry';
-    div.innerHTML = `
-      <button type='button' class='remove-btn' onclick='removeButton(${idx})'>Entfernen</button>
-      <b>Button ${idx+1}</b><br>
-      Pin: <input type='number' value='${btn.pin}' onchange='updateButton(${idx},"pin",this.value)'>
-      Key normal: <input maxlength='1' value='${btn.key_normal||""}' onchange='updateButton(${idx},"key_normal",this.value)'>
-      Key double: <input maxlength='1' value='${btn.key_double||""}' onchange='updateButton(${idx},"key_double",this.value)'>
-      Key long: <input maxlength='1' value='${btn.key_long||""}' onchange='updateButton(${idx},"key_long",this.value)'>
-      Mode: <select onchange='updateButton(${idx},"mode",this.value)'>
-        <option value='pullup' ${btn.mode=="pullup"?"selected":""}>pullup</option>
-        <option value='pulldown' ${btn.mode=="pulldown"?"selected":""}>pulldown</option>
-        <option value='input' ${btn.mode=="input"?"selected":""}>input</option>
-      </select>
-      Debounce: <input type='number' value='${btn.debounce||100}' onchange='updateButton(${idx},"debounce",this.value)'>
-    `;
-    buttonList.appendChild(div);
-  });
-}
-
-function updateButton(idx, key, value) {
-  if(key=="pin"||key=="debounce") value = parseInt(value)||0;
-  config.buttons[idx][key] = value;
-}
-function addButton() {
-  config.buttons.push({pin:0,key_normal:"",key_double:"",key_long:"",mode:"pullup",debounce:100});
-  document.getElementById('ble_led_pin').value = config.ble_led_pin||'';
-  document.getElementById('ble_led_invert').checked = !!config.ble_led_invert;
-  renderButtons();
-}
-function removeButton(idx) {
-  config.buttons.splice(idx,1);
-  renderButtons();
-}
-function fillForm() {
-  document.getElementById('ble_name').value = config.ble_name||'';
-  document.getElementById('wifi_ssid').value = config.wifi_ssid||'';
-  document.getElementById('wifi_pass').value = config.wifi_pass||'';
-  document.getElementById('doubleClickTime').value = config.doubleClickTime||400;
-  document.getElementById('longPressTime').value = config.longPressTime||800;
-  document.getElementById('ble_led_pin').value = config.ble_led_pin||'';
-  document.getElementById('ble_led_invert').checked = !!config.ble_led_invert;
-  renderButtons();
-}
-function saveCfg() {
-  config.ble_name = document.getElementById('ble_name').value;
-  config.wifi_ssid = document.getElementById('wifi_ssid').value;
-  config.wifi_pass = document.getElementById('wifi_pass').value;
-  config.doubleClickTime = parseInt(document.getElementById('doubleClickTime').value)||400;
-  config.longPressTime = parseInt(document.getElementById('longPressTime').value)||800;
-  config.ble_led_pin = parseInt(document.getElementById('ble_led_pin').value)||-1;
-  config.ble_led_invert = document.getElementById('ble_led_invert').checked;
-  fetch('/save', {method:'POST', body:JSON.stringify(config)}).then(r=>r.text()).then(t=>{
-    msg.innerText = t;
-    setTimeout(() => {
-      if (confirm('Konfiguration gespeichert!\nSoll das Gerät jetzt neu gestartet werden?')) {
-        fetch('/restart', {method:'POST'});
-      }
-    }, 500);
-  });
-}
-fetch('/config.json').then(r=>r.json()).then(j=>{config=j;if(!config.buttons)config.buttons=[];fillForm();});
-</script>
-</body></html>
-)rawliteral";
 
 
 enum ButtonState { BTN_IDLE, BTN_DEBOUNCE, BTN_PRESSED, BTN_WAIT_DOUBLE, BTN_LONG, BTN_RELEASED };
@@ -298,8 +189,11 @@ void setup() {
       }
       Serial.println();
       if (WiFi.status() == WL_CONNECTED) {
-        Serial.print("[DEBUG] WLAN-Verbindung erfolgreich! IP: ");
+        Serial.println("\n========================================");
+        Serial.println("[✓] WLAN-Verbindung erfolgreich!");
+        Serial.print("[IP] ");
         Serial.println(WiFi.localIP());
+        Serial.println("========================================\n");
       } else {
         Serial.println("[DEBUG] WLAN-Verbindung fehlgeschlagen!");
       }
@@ -311,8 +205,11 @@ void setup() {
       bool ap = WiFi.softAP("Keypad-Config");
       Serial.print("[DEBUG] Access Point gestartet: ");
       Serial.println(ap ? "OK" : "Fehler");
-      Serial.print("[DEBUG] AP-IP: ");
+      Serial.println("\n========================================");
+      Serial.println("[✓] Access Point aktiv");
+      Serial.print("[IP] http://");
       Serial.println(WiFi.softAPIP());
+      Serial.println("========================================\n");
       // Webserver Endpunkte
       server.on("/", []() {
         lastWebRequestTime = millis();
@@ -340,10 +237,13 @@ void setup() {
       webserverStartTime = millis();
       lastWebRequestTime = millis();
       webserverActive = true;
-      Serial.println("[DEBUG] Webserver gestartet (Port 80)");
+      Serial.println("[✓] Webserver gestartet (Port 80)");
     } else {
-      Serial.print("[DEBUG] WLAN verbunden: ");
+      Serial.println("\n========================================");
+      Serial.println("[✓] WLAN Webserver aktiv");
+      Serial.print("[IP] http://");
       Serial.println(WiFi.localIP());
+      Serial.println("========================================\n");
       // Webserver für lokale Bearbeitung (optional)
       server.on("/", []() {
         lastWebRequestTime = millis();
@@ -371,8 +271,12 @@ void setup() {
       webserverStartTime = millis();
       lastWebRequestTime = millis();
       webserverActive = true;
-      Serial.println("[DEBUG] Webserver gestartet (Port 80)");
+      Serial.println("[✓] Webserver gestartet (Port 80)");
     }
+  Serial.println("\n========================================");
+  Serial.println("[✓] Gerät vollständig initialisiert");
+  Serial.println("[✓] BLE Tastatur bereit");
+  Serial.println("========================================\n");
   //pinMode(8, OUTPUT);
   Serial.begin(115200);
   delay(5000); // Warte auf Serial-Port Initialisierung

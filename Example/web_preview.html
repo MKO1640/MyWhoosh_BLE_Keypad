@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keypad Config Editor - Preview</title>
+  <style>
+    /* Minimal styles copied from webUI.h for preview */
+    * {margin:0;padding:0;box-sizing:border-box}
+    body{font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;max-width:900px;margin:0 auto;padding:2em 1em;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh}
+    .container{background:#fff;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.2);padding:2em}
+    h2{color:#333;margin-bottom:1.5em;font-size:2em}
+    .form-group{margin-bottom:1.5em}
+    label{display:block;margin-bottom:.5em;color:#555;font-weight:600;font-size:.95em}
+    input[type=text],input[type=password],input[type=number],select{width:100%;padding:.75em;border:2px solid #e0e0e0;border-radius:6px;font-size:1em;transition:border-color .3s}
+    input:focus,select:focus{outline:none;border-color:#667eea;box-shadow:0 0 0 3px rgba(102,126,234,.1)}
+    .checkbox-group{display:flex;align-items:center;gap:.75em}
+    .button-list{margin:2em 0;display:grid;gap:1em}
+    .button-entry{background:#f9f9f9;border:2px solid #e0e0e0;padding:1.5em;border-radius:8px;position:relative}
+    .button-entry-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1em;padding-bottom:1em;border-bottom:1px solid #e0e0e0}
+    .button-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1em}
+    .remove-btn{background:#e74c3c;color:#fff;border:none;padding:.5em 1em;border-radius:4px;cursor:pointer}
+    .add-btn{background:#27ae60;color:#fff;border:none;padding:.75em 1.5em;border-radius:6px;cursor:pointer}
+    .submit-btn{background:#667eea;color:#fff;border:none;padding:.75em 2em;border-radius:6px;cursor:pointer}
+    #msg{margin-top:1.5em;padding:1em;border-radius:6px;display:none}
+    #msg.success{background:#d4edda;color:#155724;border:1px solid #c3e6cb;display:block}
+    #msg.error{background:#f8d7da;color:#721c24;border:1px solid #f5c6cb;display:block}
+  </style>
+</head>
+<body>
+<div class="container">
+  <h2>⚙️ Keypad Konfiguration — Vorschau</h2>
+  <form id="cfgform" onsubmit="event.preventDefault(); saveCfg();">
+    <div class="form-group">
+      <label for="ble_name">BLE Name</label>
+      <input id="ble_name" name="ble_name" type="text">
+    </div>
+    <div class="form-group">
+      <label for="wifi_ssid">WLAN SSID</label>
+      <input id="wifi_ssid" name="wifi_ssid" type="text">
+    </div>
+    <div class="form-group">
+      <label for="wifi_pass">WLAN Passwort</label>
+      <input id="wifi_pass" name="wifi_pass" type="password">
+    </div>
+    <div class="form-group">
+      <label for="doubleClickTime">Doppelklick-Zeit (ms)</label>
+      <input id="doubleClickTime" name="doubleClickTime" type="number" min="100" max="2000">
+    </div>
+    <div class="form-group">
+      <label for="longPressTime">Langklick-Zeit (ms)</label>
+      <input id="longPressTime" name="longPressTime" type="number" min="100" max="5000">
+    </div>
+    <div class="form-group">
+      <label for="ble_led_pin">BLE LED Pin</label>
+      <input id="ble_led_pin" name="ble_led_pin" type="number">
+    </div>
+    <div class="form-group">
+      <div class="checkbox-group">
+        <input id="ble_led_invert" name="ble_led_invert" type="checkbox">
+        <label for="ble_led_invert" style="margin-bottom:0">BLE LED invertieren</label>
+      </div>
+    </div>
+
+    <h3>🔘 Buttons</h3>
+    <div id="button-list" class="button-list"></div>
+    <div style="margin-top:1em"><button type="button" class="add-btn" onclick="addButton()">+ Button hinzufügen</button></div>
+    <br>
+    <button type="submit" class="submit-btn">💾 Speichern (nur Demo)</button>
+  </form>
+  <div id="msg"></div>
+</div>
+
+<script>
+// Sample fallback config so the preview works when opened directly in the browser
+const sampleConfig = {
+  ble_name: "ESP32 Keyboard",
+  wifi_ssid: "MeinWLAN",
+  wifi_pass: "geheim",
+  doubleClickTime: 400,
+  longPressTime: 800,
+  ble_led_pin: 6,
+  ble_led_invert: false,
+  buttons: [
+    {pin: 0, key_normal: 'A', key_double: 'B', key_long: 'C', mode: 'pullup', debounce: 100},
+    {pin: 2, key_normal: '1', key_double: '2', key_long: '3', mode: 'pullup', debounce: 100}
+  ]
+};
+
+let config = {};
+let buttonList = document.getElementById('button-list');
+
+function renderButtons(){
+  buttonList.innerHTML = '';
+  config.buttons.forEach((btn,idx)=>{
+    const div = document.createElement('div');
+    div.className='button-entry';
+    div.innerHTML = `\n      <div class="button-entry-header">\n        <span class="button-entry-title">Button ${idx+1}</span>\n        <button type="button" class="remove-btn" onclick="removeButton(${idx})">Entfernen</button>\n      </div>\n      <div class="button-grid">\n        <div class="form-group">\n          <label>Pin:</label>\n          <input type="number" value="${btn.pin}" onchange="updateButton(${idx},'pin',this.value)">\n        </div>\n        <div class="form-group">\n          <label>Normal:</label>\n          <input type="text" maxlength="1" value="${btn.key_normal||''}" onchange="updateButton(${idx},'key_normal',this.value)">\n        </div>\n        <div class="form-group">\n          <label>Doppel:</label>\n          <input type="text" maxlength="1" value="${btn.key_double||''}" onchange="updateButton(${idx},'key_double',this.value)">\n        </div>\n        <div class="form-group">\n          <label>Lang:</label>\n          <input type="text" maxlength="1" value="${btn.key_long||''}" onchange="updateButton(${idx},'key_long',this.value)">\n        </div>\n        <div class="form-group">\n          <label>Mode:</label>\n          <select onchange="updateButton(${idx},'mode',this.value)">\n            <option value="pullup" ${btn.mode=='pullup'?'selected':''}>pullup</option>\n            <option value="pulldown" ${btn.mode=='pulldown'?'selected':''}>pulldown</option>\n            <option value="input" ${btn.mode=='input'?'selected':''}>input</option>\n          </select>\n        </div>\n        <div class="form-group">\n          <label>Debounce (ms):</label>\n          <input type="number" value="${btn.debounce||100}" onchange="updateButton(${idx},'debounce',this.value)">\n        </div>\n      </div>\n    `;
+    buttonList.appendChild(div);
+  });
+}
+function updateButton(idx,key,value){if(key=='pin'||key=='debounce')value=parseInt(value)||0;config.buttons[idx][key]=value}
+function addButton(){config.buttons.push({pin:0,key_normal:'',key_double:'',key_long:'',mode:'pullup',debounce:100});renderButtons()}
+function removeButton(idx){config.buttons.splice(idx,1);renderButtons()}
+function fillForm(){document.getElementById('ble_name').value=config.ble_name||'';document.getElementById('wifi_ssid').value=config.wifi_ssid||'';document.getElementById('wifi_pass').value=config.wifi_pass||'';document.getElementById('doubleClickTime').value=config.doubleClickTime||400;document.getElementById('longPressTime').value=config.longPressTime||800;document.getElementById('ble_led_pin').value=config.ble_led_pin||'';document.getElementById('ble_led_invert').checked=!!config.ble_led_invert;renderButtons()}
+function saveCfg(){let msg=document.getElementById('msg');msg.className='success';msg.innerText='Demo: Änderungen nicht an Gerät gesendet';setTimeout(()=>msg.innerText='',2000)}
+
+// Try to fetch real /config.json (when served), otherwise use sampleConfig
+fetch('/config.json').then(r=>r.json()).then(j=>{config=j;if(!config.buttons)config.buttons=[];fillForm()}).catch(err=>{console.warn('Using sample config for preview',err);config=sampleConfig;fillForm()});
+</script>
+</body>
+</html>
