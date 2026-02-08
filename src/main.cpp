@@ -12,7 +12,7 @@ const unsigned long WEBSERVER_TIMEOUT = 600000; // 10 Minuten
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
-#include <BleKeyboard.h>
+#include <BleCombo.h>
 WebServer server(80);
 WiFiManager wm;
 
@@ -22,7 +22,6 @@ String loadConfigString() {
   File file = LittleFS.open("/config.json", "r");
   if (!file) return "{}";
   String content = file.readString();
-  file.close();
   return content;
 }
 
@@ -150,9 +149,9 @@ fetch('/config.json').then(r=>r.json()).then(j=>{config=j;if(!config.buttons)con
 enum ButtonState { BTN_IDLE, BTN_DEBOUNCE, BTN_PRESSED, BTN_WAIT_DOUBLE, BTN_LONG, BTN_RELEASED };
 struct ButtonConfig {
   int pin;
-  char key_normal;
-  char key_double;
-  char key_long;
+  String key_normal;
+  String key_double;
+  String key_long;
   String mode;
   int debounce;
   int lastState;
@@ -167,7 +166,16 @@ int buttonCount = 0;
 String bleName = "ESP32 Keyboard";
 String wifiSSID = "";
 String wifiPASS = "";
-BleKeyboard bleKeyboard;
+
+struct MouseAction {
+  String name;
+  int x;
+  int y;
+  String button;
+};
+MouseAction mouseActions[8];
+int mouseActionCount = 0;
+BleCombo bleCombo;
 
 // Globale Zeiten für Doppelklick und Langklick
 unsigned long doubleClickTime = 400; // ms
@@ -175,6 +183,7 @@ unsigned long longPressTime = 800; // ms
 
 int bleLedPin = -1;
 bool bleLedInvert = false;
+void executeMouseAction(const String& actionName);
 void loadConfig() {
     Serial.print("[DEBUG] WLAN SSID: ");
     Serial.println(wifiSSID);
@@ -224,19 +233,18 @@ void loadConfig() {
   buttonCount = doc["buttons"].size();
   for (int i = 0; i < buttonCount; i++) {
     buttons[i].pin = doc["buttons"][i]["pin"].as<int>();
-    // Neue Struktur: key_normal, key_double, key_long
     if (doc["buttons"][i].containsKey("key_normal"))
-      buttons[i].key_normal = doc["buttons"][i]["key_normal"].as<const char*>()[0];
+      buttons[i].key_normal = doc["buttons"][i]["key_normal"].as<String>();
     else if (doc["buttons"][i].containsKey("key"))
-      buttons[i].key_normal = doc["buttons"][i]["key"].as<const char*>()[0];
+      buttons[i].key_normal = doc["buttons"][i]["key"].as<String>();
     else
-      buttons[i].key_normal = 'A';
+      buttons[i].key_normal = "A";
     if (doc["buttons"][i].containsKey("key_double"))
-      buttons[i].key_double = doc["buttons"][i]["key_double"].as<const char*>()[0];
+      buttons[i].key_double = doc["buttons"][i]["key_double"].as<String>();
     else
       buttons[i].key_double = buttons[i].key_normal;
     if (doc["buttons"][i].containsKey("key_long"))
-      buttons[i].key_long = doc["buttons"][i]["key_long"].as<const char*>()[0];
+      buttons[i].key_long = doc["buttons"][i]["key_long"].as<String>();
     else
       buttons[i].key_long = buttons[i].key_normal;
     if (doc["buttons"][i].containsKey("mode")) {
@@ -256,6 +264,22 @@ void loadConfig() {
     buttons[i].state = BTN_IDLE;
     buttons[i].doubleClickPending = false;
   }
+
+  // Mausaktionen laden
+  mouseActionCount = 0;
+  if (doc.containsKey("mouse_actions")) {
+    JsonArray arr = doc["mouse_actions"].as<JsonArray>();
+    for (JsonObject obj : arr) {
+      if (mouseActionCount < 8) {
+        mouseActions[mouseActionCount].name = obj["name"].as<String>();
+        mouseActions[mouseActionCount].x = obj["x"].as<int>();
+        mouseActions[mouseActionCount].y = obj["y"].as<int>();
+        mouseActions[mouseActionCount].button = obj["button"].as<String>();
+        mouseActionCount++;
+      }
+    }
+  }
+
   file.close();
   Serial.println("[DEBUG] Geladene Konfiguration:");
   Serial.print("[DEBUG] BLE-Name: ");
@@ -275,6 +299,26 @@ void loadConfig() {
     Serial.print(buttons[i].key_long);
     Serial.print("', Mode: ");
     Serial.println(buttons[i].mode);
+  }
+}
+
+// Hilfsfunktion: Mausaktion ausführen
+void executeMouseAction(const String& actionName) {
+  for (int i = 0; i < mouseActionCount; i++) {
+    if (mouseActions[i].name == actionName) {
+      int mx = mouseActions[i].x;
+      int my = mouseActions[i].y;
+      String btn = mouseActions[i].button;
+      uint8_t mouseBtn = 0;
+      if (btn == "left") mouseBtn = MOUSE_LEFT;
+      else if (btn == "right") mouseBtn = MOUSE_RIGHT;
+      else if (btn == "middle") mouseBtn = MOUSE_MIDDLE;
+      else if (btn == "back") mouseBtn = MOUSE_BACK;
+      else if (btn == "forward") mouseBtn = MOUSE_FORWARD;
+      bleCombo.move(mx, my);
+      if (mouseBtn) bleCombo.click(mouseBtn);
+      return;
+    }
   }
 }
 
@@ -420,10 +464,11 @@ void setup() {
     Serial.print("[DEBUG] BLE LED invertiert: ");
     Serial.println(bleLedInvert ? "true" : "false");
   }
-  bleKeyboard.setName(bleName.c_str());
+  // BleCombo: Name kann im Konstruktor gesetzt werden, alternativ setName nutzen
+  bleCombo.setName(bleName.c_str());
   Serial.println("[DEBUG] BLE-Name gesetzt");
-  bleKeyboard.begin();
-  Serial.println("[DEBUG] BLE Keyboard gestartet");
+  bleCombo.begin();
+  Serial.println("[DEBUG] BLE Combo gestartet");
   Serial.print("Tastatur-Emulator gestartet (BLE-Modus, Name: ");
   Serial.print(bleName);
   Serial.println(")");
@@ -452,7 +497,7 @@ void loop() {
     auto ledWrite = [&](bool on) {
       digitalWrite(bleLedPin, bleLedInvert ? !on : on);
     };
-    if (bleKeyboard.isConnected()) {
+    if (bleCombo.isConnected()) {
       ledWrite(true); // LED dauerhaft an bei Verbindung
       bleWasConnected = true;
       bleFastBlinkActive = false;
@@ -479,7 +524,7 @@ void loop() {
       }
     }
   }
-  if (bleKeyboard.isConnected()) {
+  if (bleCombo.isConnected()) {
     for (int i = 0; i < buttonCount; i++) {
       int pinState = digitalRead(buttons[i].pin);
       switch (buttons[i].state) {
@@ -504,9 +549,20 @@ void loop() {
               // Doppelklick erkannt
               Serial.print("-> Doppelklick: ");
               Serial.println(buttons[i].key_double);
-              bleKeyboard.press(buttons[i].key_double);
-              delay(100);
-              bleKeyboard.release(buttons[i].key_double);
+              String doubleName = buttons[i].key_double;
+              bool mouseDone = false;
+              for (int m = 0; m < mouseActionCount; m++) {
+                if (mouseActions[m].name == doubleName) {
+                  executeMouseAction(doubleName);
+                  mouseDone = true;
+                  break;
+                }
+              }
+              if (!mouseDone) {
+                bleCombo.press((uint8_t)buttons[i].key_double[0]);
+                delay(100);
+                bleCombo.release((uint8_t)buttons[i].key_double[0]);
+              }
               buttons[i].doubleClickPending = false;
               buttons[i].state = BTN_IDLE;
             } else {
@@ -519,9 +575,20 @@ void loop() {
             // Langklick erkannt
             Serial.print("-> Langklick: ");
             Serial.println(buttons[i].key_long);
-            bleKeyboard.press(buttons[i].key_long);
-            delay(100);
-            bleKeyboard.release(buttons[i].key_long);
+            String longName = buttons[i].key_long;
+            bool mouseDone = false;
+            for (int m = 0; m < mouseActionCount; m++) {
+              if (mouseActions[m].name == longName) {
+                executeMouseAction(longName);
+                mouseDone = true;
+                break;
+              }
+            }
+            if (!mouseDone) {
+              bleCombo.press((uint8_t)buttons[i].key_long[0]);
+              delay(100);
+              bleCombo.release((uint8_t)buttons[i].key_long[0]);
+            }
             buttons[i].doubleClickPending = false;
             buttons[i].state = BTN_LONG;
           }
@@ -534,9 +601,20 @@ void loop() {
             // Zeit abgelaufen, Normalklick
             Serial.print("-> Normalklick: ");
             Serial.println(buttons[i].key_normal);
-            bleKeyboard.press(buttons[i].key_normal);
-            delay(100);
-            bleKeyboard.release(buttons[i].key_normal);
+            String normalName = buttons[i].key_normal;
+            bool mouseDone = false;
+            for (int m = 0; m < mouseActionCount; m++) {
+              if (mouseActions[m].name == normalName) {
+                executeMouseAction(normalName);
+                mouseDone = true;
+                break;
+              }
+            }
+            if (!mouseDone) {
+              bleCombo.press((uint8_t)buttons[i].key_normal[0]);
+              delay(100);
+              bleCombo.release((uint8_t)buttons[i].key_normal[0]);
+            }
             buttons[i].doubleClickPending = false;
             buttons[i].state = BTN_IDLE;
           }
