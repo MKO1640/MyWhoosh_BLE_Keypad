@@ -4,14 +4,16 @@
    "wifi_pass": "DEIN_PASSWORT",
    "doubleClickTime": 400,
    "longPressTime": 800,
-   "debug_ble": false,
-   "ble_led_pin": 8,
+   "battery_enabled": true,
+   "battery_pin": 2,
+   "debug_ble": true,
+   "ble_led_pin": 10,
    "ble_led_invert": true,
    "buttons": [
-      { "pin": 0, "key_normal": "I", "key_double": "1", "key_long": "MouseMove1", "mode": "pullup", "debounce": 100 },
-      { "pin": 1, "key_normal": "K", "key_double": "2", "key_long": "MouseMove2", "mode": "pullup", "debounce": 100 },
-      { "pin": 2, "key_normal": "A", "key_double": "3", "key_long": "MouseMove3", "mode": "pullup", "debounce": 100 },
-      { "pin": 3, "key_normal": "D", "key_double": "4", "key_long": "MouseMove1", "mode": "pullup", "debounce": 100 }
+      { "pin": 3, "key_normal": "I", "key_double": "1", "key_long": "MouseMove1", "mode": "pullup", "debounce": 100 },
+      { "pin": 4, "key_normal": "K", "key_double": "2", "key_long": "MouseMove2", "mode": "pullup", "debounce": 100 },
+      { "pin": 5, "key_normal": "A", "key_double": "3", "key_long": "MouseMove3", "mode": "pullup", "debounce": 100 },
+      { "pin": 6, "key_normal": "D", "key_double": "4", "key_long": "MouseMove1", "mode": "pullup", "debounce": 100 }
    ],
    "mouse_actions": [
       { "name": "MouseMove1", "x": 2000, "y": 5000 },

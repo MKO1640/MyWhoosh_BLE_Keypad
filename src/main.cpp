@@ -16,6 +16,12 @@ const unsigned long WEBSERVER_TIMEOUT = 600000; // 10 Minuten
 WebServer server(80);
 WiFiManager wm;
 bool debugOutput = false;
+bool batteryEnabled = false;
+int batteryPin = -1;
+unsigned long batteryLastRead = 0;
+int lastBatteryPercent = -1;
+const unsigned long BATTERY_READ_INTERVAL = 60000;
+BleComboAbs bleCombo;
 
 template <typename T>
 void debugPrint(const T& value) {
@@ -28,6 +34,68 @@ template <typename T>
 void debugPrintln(const T& value) {
   if (debugOutput) {
     Serial.println(value);
+  }
+}
+
+float readBatteryVoltage() {
+  if (batteryPin < 0) {
+    return -1.0f;
+  }
+  const int samples = 16;
+  uint32_t mv = 0;
+  for (int i = 0; i < samples; i++) {
+    mv += analogReadMilliVolts(batteryPin);
+  }
+  float v = (mv / (float)samples) / 1000.0f;
+  return v * 2.0f; // 1/2 divider
+}
+
+int batteryPercentFromVoltage(float v) {
+  struct Point { float v; int p; };
+  const Point points[] = {
+    {2.5f, 0},
+    {3.0f, 5},
+    {3.2f, 8},
+    {3.3f, 15},
+    {3.4f, 25},
+    {3.5f, 35},
+    {3.6f, 45},
+    {3.7f, 55},
+    {3.8f, 70},
+    {3.9f, 80},
+    {4.0f, 90},
+    {4.1f, 95},
+    {4.2f, 100}
+  };
+  if (v <= points[0].v) return points[0].p;
+  const int count = sizeof(points) / sizeof(points[0]);
+  if (v >= points[count - 1].v) return points[count - 1].p;
+  for (int i = 0; i < count - 1; i++) {
+    if (v >= points[i].v && v <= points[i + 1].v) {
+      float t = (v - points[i].v) / (points[i + 1].v - points[i].v);
+      return (int)(points[i].p + t * (points[i + 1].p - points[i].p));
+    }
+  }
+  return 0;
+}
+
+void updateBatteryLevel(bool force = false) {
+  if (!batteryEnabled || batteryPin < 0) {
+    return;
+  }
+  float v = readBatteryVoltage();
+  if (v <= 0.0f) {
+    return;
+  }
+  int percent = batteryPercentFromVoltage(v);
+  if (force || percent != lastBatteryPercent) {
+    bleCombo.setBatteryLevel((uint8_t)percent);
+    lastBatteryPercent = percent;
+    debugPrint("[DEBUG] Battery V=");
+    debugPrint(v);
+    debugPrint(" -> ");
+    debugPrint(percent);
+    debugPrintln("%");
   }
 }
 
@@ -77,6 +145,8 @@ const char* configEditorHTML = R"rawliteral(
   <label>WLAN Passwort: <input id='wifi_pass' name='wifi_pass' type='password'></label>
   <label>Doppelklick-Zeit (ms): <input id='doubleClickTime' name='doubleClickTime' type='number'></label>
   <label>Langklick-Zeit (ms): <input id='longPressTime' name='longPressTime' type='number'></label>
+  <label>Battery aktiv: <input id='battery_enabled' name='battery_enabled' type='checkbox'></label>
+  <label>Battery Pin: <input id='battery_pin' name='battery_pin' type='number'></label>
   <label>BLE LED Pin: <input id='ble_led_pin' name='ble_led_pin' type='number'></label>
   <label>BLE LED invertieren: <input id='ble_led_invert' name='ble_led_invert' type='checkbox'></label>
   <label>Debug Ausgabe: <input id='debug_ble' name='debug_ble' type='checkbox'></label>
@@ -84,6 +154,10 @@ const char* configEditorHTML = R"rawliteral(
   <h3>Buttons</h3>
   <div id='button-list' class='button-list'></div>
   <button type='button' class='add-btn' onclick='addButton()'>Button hinzufügen</button>
+
+  <h3>Mouse Actions</h3>
+  <div id='mouse-action-list' class='button-list'></div>
+  <button type='button' class='add-btn' onclick='addMouseAction()'>Mouse Action hinzufügen</button>
   <br><br>
   <button type='submit'>Speichern</button>
 </form>
@@ -91,6 +165,7 @@ const char* configEditorHTML = R"rawliteral(
 <script>
 let config = {};
 let buttonList = document.getElementById('button-list');
+let mouseActionList = document.getElementById('mouse-action-list');
 
 function renderButtons() {
   buttonList.innerHTML = '';
@@ -115,6 +190,22 @@ function renderButtons() {
   });
 }
 
+function renderMouseActions() {
+  mouseActionList.innerHTML = '';
+  config.mouse_actions.forEach((action, idx) => {
+    let div = document.createElement('div');
+    div.className = 'button-entry';
+    div.innerHTML = `
+      <button type='button' class='remove-btn' onclick='removeMouseAction(${idx})'>Entfernen</button>
+      <b>Mouse Action ${idx+1}</b><br>
+      Name: <input value='${action.name||""}' onchange='updateMouseAction(${idx},"name",this.value)'>
+      X: <input type='number' value='${action.x||0}' onchange='updateMouseAction(${idx},"x",this.value)'>
+      Y: <input type='number' value='${action.y||0}' onchange='updateMouseAction(${idx},"y",this.value)'>
+    `;
+    mouseActionList.appendChild(div);
+  });
+}
+
 function updateButton(idx, key, value) {
   if(key=="pin"||key=="debounce") value = parseInt(value)||0;
   config.buttons[idx][key] = value;
@@ -129,16 +220,31 @@ function removeButton(idx) {
   config.buttons.splice(idx,1);
   renderButtons();
 }
+function updateMouseAction(idx, key, value) {
+  if (key=="x"||key=="y") value = parseInt(value)||0;
+  config.mouse_actions[idx][key] = value;
+}
+function addMouseAction() {
+  config.mouse_actions.push({name:"",x:0,y:0});
+  renderMouseActions();
+}
+function removeMouseAction(idx) {
+  config.mouse_actions.splice(idx,1);
+  renderMouseActions();
+}
 function fillForm() {
   document.getElementById('ble_name').value = config.ble_name||'';
   document.getElementById('wifi_ssid').value = config.wifi_ssid||'';
   document.getElementById('wifi_pass').value = config.wifi_pass||'';
   document.getElementById('doubleClickTime').value = config.doubleClickTime||400;
   document.getElementById('longPressTime').value = config.longPressTime||800;
+  document.getElementById('battery_enabled').checked = !!config.battery_enabled;
+  document.getElementById('battery_pin').value = config.battery_pin||'';
   document.getElementById('ble_led_pin').value = config.ble_led_pin||'';
   document.getElementById('ble_led_invert').checked = !!config.ble_led_invert;
   document.getElementById('debug_ble').checked = !!config.debug_ble;
   renderButtons();
+  renderMouseActions();
 }
 function saveCfg() {
   config.ble_name = document.getElementById('ble_name').value;
@@ -146,6 +252,8 @@ function saveCfg() {
   config.wifi_pass = document.getElementById('wifi_pass').value;
   config.doubleClickTime = parseInt(document.getElementById('doubleClickTime').value)||400;
   config.longPressTime = parseInt(document.getElementById('longPressTime').value)||800;
+  config.battery_enabled = document.getElementById('battery_enabled').checked;
+  config.battery_pin = parseInt(document.getElementById('battery_pin').value)||-1;
   config.ble_led_pin = parseInt(document.getElementById('ble_led_pin').value)||-1;
   config.ble_led_invert = document.getElementById('ble_led_invert').checked;
   config.debug_ble = document.getElementById('debug_ble').checked;
@@ -158,7 +266,12 @@ function saveCfg() {
     }, 500);
   });
 }
-fetch('/config.json').then(r=>r.json()).then(j=>{config=j;if(!config.buttons)config.buttons=[];fillForm();});
+fetch('/config.json').then(r=>r.json()).then(j=>{
+  config=j;
+  if(!config.buttons)config.buttons=[];
+  if(!config.mouse_actions)config.mouse_actions=[];
+  fillForm();
+});
 </script>
 </body></html>
 )rawliteral";
@@ -192,7 +305,6 @@ struct MouseAction {
 };
 MouseAction mouseActions[8];
 int mouseActionCount = 0;
-BleComboAbs bleCombo;
 
 // Globale Zeiten für Doppelklick und Langklick
 unsigned long doubleClickTime = 400; // ms
@@ -230,6 +342,16 @@ void loadConfig() {
   }
   if (doc.containsKey("longPressTime")) {
     longPressTime = doc["longPressTime"].as<unsigned long>();
+  }
+  if (doc.containsKey("battery_enabled")) {
+    batteryEnabled = doc["battery_enabled"].as<bool>();
+  } else {
+    batteryEnabled = false;
+  }
+  if (doc.containsKey("battery_pin")) {
+    batteryPin = doc["battery_pin"].as<int>();
+  } else {
+    batteryPin = -1;
   }
   if (doc.containsKey("wifi_ssid")) {
     wifiSSID = doc["wifi_ssid"].as<String>();
@@ -369,21 +491,21 @@ void setup() {
       }
       Serial.println();
       if (WiFi.status() == WL_CONNECTED) {
-        debugPrint("[DEBUG] WLAN-Verbindung erfolgreich! IP: ");
-        debugPrintln(WiFi.localIP());
+        Serial.print("WLAN-Verbindung erfolgreich! IP: ");
+        Serial.println(WiFi.localIP());
       } else {
-        debugPrintln("[DEBUG] WLAN-Verbindung fehlgeschlagen!");
+        Serial.println("WLAN-Verbindung fehlgeschlagen!");
       }
       wifiConnected = (WiFi.status() == WL_CONNECTED);
     }
     if (!wifiConnected) {
-      debugPrintln("[DEBUG] Keine WLAN-Verbindung, Captive Portal aktiv!");
+      Serial.print("Keine WLAN-Verbindung, Captive Portal aktiv!");
       WiFi.mode(WIFI_AP);
       bool ap = WiFi.softAP("Keypad-Config");
-      debugPrint("[DEBUG] Access Point gestartet: ");
-      debugPrintln(ap ? "OK" : "Fehler");
-      debugPrint("[DEBUG] AP-IP: ");
-      debugPrintln(WiFi.softAPIP());
+      Serial.print("Access Point gestartet: ");
+      Serial.println(ap ? "OK" : "Fehler");
+      Serial.print("AP-IP: ");
+      Serial.println(WiFi.softAPIP());
       // Webserver Endpunkte
       server.on("/", []() {
         lastWebRequestTime = millis();
@@ -411,10 +533,10 @@ void setup() {
       webserverStartTime = millis();
       lastWebRequestTime = millis();
       webserverActive = true;
-      debugPrintln("[DEBUG] Webserver gestartet (Port 80)");
+      Serial.println("Webserver gestartet (Port 80)");
     } else {
-      debugPrint("[DEBUG] WLAN verbunden: ");
-      debugPrintln(WiFi.localIP());
+      Serial.print("WLAN verbunden: ");
+      Serial.println(WiFi.localIP());
       // Webserver für lokale Bearbeitung (optional)
       server.on("/", []() {
         lastWebRequestTime = millis();
@@ -491,10 +613,16 @@ void setup() {
     debugPrint("[DEBUG] BLE LED invertiert: ");
     debugPrintln(bleLedInvert ? "true" : "false");
   }
+  if (batteryEnabled && batteryPin >= 0) {
+    pinMode(batteryPin, INPUT);
+    debugPrint("[DEBUG] Battery Pin initialisiert: ");
+    debugPrintln(batteryPin);
+  }
   bleCombo.setName(bleName.c_str());
   bleCombo.setDebug(debugOutput);
   debugPrintln("[DEBUG] BLE-Name gesetzt");
   bleCombo.begin();
+  updateBatteryLevel(true);
   debugPrintln("[DEBUG] BLE Keyboard und Abs Mouse gestartet");
   Serial.print("Tastatur-Emulator gestartet (BLE-Modus, Name: ");
   Serial.print(bleName);
@@ -586,8 +714,8 @@ void loop() {
                 }
               }
               if (!mouseDone && bleConnected) {
-                debugPrint("[DEBUG] Keyboard double key: ");
-                debugPrintln(buttons[i].key_double);
+                Serial.print("Keyboard double key: ");
+                Serial.println(buttons[i].key_double);
                 bleCombo.press((uint8_t)buttons[i].key_double[0]);
                 delay(100);
                 bleCombo.release((uint8_t)buttons[i].key_double[0]);
@@ -602,8 +730,8 @@ void loop() {
             }
           } else if (now - buttons[i].pressStart > longPressTime) {
             // Langklick erkannt
-            debugPrint("-> Langklick: ");
-            debugPrintln(buttons[i].key_long);
+            Serial.print("-> Langklick: ");
+            Serial.println(buttons[i].key_long);
             String longName = buttons[i].key_long;
             bool mouseDone = false;
             for (int m = 0; m < mouseActionCount; m++) {
@@ -614,8 +742,8 @@ void loop() {
               }
             }
             if (!mouseDone && bleConnected) {
-              debugPrint("[DEBUG] Keyboard long key: ");
-              debugPrintln(buttons[i].key_long);
+              Serial.print("[DEBUG] Keyboard long key: ");
+              Serial.println(buttons[i].key_long);
               bleCombo.press((uint8_t)buttons[i].key_long[0]);
               delay(100);
               bleCombo.release((uint8_t)buttons[i].key_long[0]);
@@ -630,8 +758,8 @@ void loop() {
             buttons[i].lastChange = now;
           } else if (now - buttons[i].lastRelease > doubleClickTime) {
             // Zeit abgelaufen, Normalklick
-            debugPrint("-> Normalklick: ");
-            debugPrintln(buttons[i].key_normal);
+            Serial.print("-> Normalklick: ");
+            Serial.println(buttons[i].key_normal);
             String normalName = buttons[i].key_normal;
             bool mouseDone = false;
             for (int m = 0; m < mouseActionCount; m++) {
@@ -642,8 +770,8 @@ void loop() {
               }
             }
             if (!mouseDone && bleConnected) {
-              debugPrint("[DEBUG] Keyboard normal key: ");
-              debugPrintln(buttons[i].key_normal);
+              Serial.print("Keyboard normal key: ");
+              Serial.println(buttons[i].key_normal);
               bleCombo.press((uint8_t)buttons[i].key_normal[0]);
               delay(100);
               bleCombo.release((uint8_t)buttons[i].key_normal[0]);
@@ -662,6 +790,13 @@ void loop() {
           break;
       }
     buttons[i].lastState = pinState;
+  }
+
+  if (batteryEnabled && batteryPin >= 0) {
+    if (now - batteryLastRead > BATTERY_READ_INTERVAL) {
+      batteryLastRead = now;
+      updateBatteryLevel(false);
+    }
   }
 }
   

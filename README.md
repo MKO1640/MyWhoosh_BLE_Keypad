@@ -55,6 +55,8 @@ Beispiel für `config.json`:
    "wifi_pass": "DEIN_PASSWORT",
    "doubleClickTime": 400,
    "longPressTime": 800,
+   "battery_enabled": false,
+   "battery_pin": -1,
    "debug_ble": false,
    "mouse_actions": [
       { "name": "MouseMove1", "x": 2000, "y": 5000 },
@@ -71,6 +73,8 @@ Beispiel für `config.json`:
 - **wifi_pass**: WLAN-Passwort
 - **doubleClickTime**: Zeitfenster für Doppelklick (ms, global)
 - **longPressTime**: Zeit für Langklick (ms, global)
+- **battery_enabled**: Battery-Monitoring aktivieren (true/false)
+- **battery_pin**: ADC-Pin fuer Batteriespannung (-1 deaktiviert)
 - **debug_ble**: Debug-Ausgabe im seriellen Monitor aktivieren (true/false)
 - **buttons**: Liste der Tasten (GPIO, Keycodes, Modus, Entprellzeit)
 - **mouse_actions**: Aktionen fuer die BLE-Abs-Mouse (absolute Koordinaten 0..10000)
