@@ -4,7 +4,7 @@
 		{
 			"label": "Build ESP32 BLE Combo Project",
 			"type": "shell",
-			"command": "platformio",
+			"command": "C:\\Users\\micha\\.platformio\\penv\\Scripts\\platformio.exe",
 			"args": [
 				"run"
 			],
