@@ -5,6 +5,7 @@ Dieses Projekt implementiert ein BLE-Keypad auf Basis eines ESP32/ESP32-C3, um d
 ## Features
 
 - **BLE-Tastatur-Emulation**: Funktioniert als drahtloses Keypad für MYWhoosh
+- **BLE-Abs-Mouse (absolut)**: Mausaktionen mit absoluten Koordinaten (im gleichen BLE-Geraet)
 - **Bluetooth-LED (BLE LED)**: Statusanzeige für Bluetooth-Verbindung (Pin und Logik konfigurierbar)
 - **Mehrfachbelegung pro Taste**: Normalklick, Doppelklick, Langklick je GPIO
 - **Konfigurierbar**: Tasten, Modi, Zeiten und BLE LED über `config.json` einstellbar
@@ -39,7 +40,7 @@ Dieses Projekt implementiert ein BLE-Keypad auf Basis eines ESP32/ESP32-C3, um d
    - **Tipp:** Die aktuelle IP und Debug-Infos werden im seriellen Monitor ausgegeben.
    - **Bluetooth-LED:** Die LED zeigt den Status der Bluetooth-Verbindung an. Pin und Logik (invertiert/nicht invertiert) sind in der Konfiguration einstellbar. Die LED blinkt langsam bei Wartezustand, schnell nach Verbindungsabbruch und leuchtet dauerhaft bei aktiver Verbindung.
 6. **Mit MYWhoosh koppeln**
-   - Das Keypad erscheint als BLE-Tastatur (Name konfigurierbar)
+   - Das Keypad erscheint als BLE-Tastatur mit integrierter Abs-Mouse (Name konfigurierbar)
 
 
 ## Web-Konfiguration & config.json
@@ -54,6 +55,13 @@ Beispiel für `config.json`:
    "wifi_pass": "DEIN_PASSWORT",
    "doubleClickTime": 400,
    "longPressTime": 800,
+   "battery_enabled": false,
+   "battery_pin": -1,
+   "debug_ble": false,
+   "mouse_actions": [
+      { "name": "MouseMove1", "x": 2000, "y": 5000 },
+      { "name": "MouseMove2", "x": 5000, "y": 2000 }
+   ],
    "buttons": [
       { "pin": 4, "key_normal": "I", "key_double": "1", "key_long": "5", "mode": "pullup", "debounce": 100 },
       { "pin": 5, "key_normal": "K", "key_double": "2", "key_long": "6", "mode": "pullup", "debounce": 100 }
@@ -65,7 +73,11 @@ Beispiel für `config.json`:
 - **wifi_pass**: WLAN-Passwort
 - **doubleClickTime**: Zeitfenster für Doppelklick (ms, global)
 - **longPressTime**: Zeit für Langklick (ms, global)
+- **battery_enabled**: Battery-Monitoring aktivieren (true/false)
+- **battery_pin**: ADC-Pin fuer Batteriespannung (-1 deaktiviert)
+- **debug_ble**: Debug-Ausgabe im seriellen Monitor aktivieren (true/false)
 - **buttons**: Liste der Tasten (GPIO, Keycodes, Modus, Entprellzeit)
+- **mouse_actions**: Aktionen fuer die BLE-Abs-Mouse (absolute Koordinaten 0..10000)
 
 ## Tastenbelegung für MYWhoosh
 - Die Keycodes entsprechen den Tastaturbefehlen, die MYWhoosh akzeptiert (z.B. I, K, D, A, ...)

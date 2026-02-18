@@ -12,9 +12,92 @@ const unsigned long WEBSERVER_TIMEOUT = 600000; // 10 Minuten
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
-#include <BleKeyboard.h>
+#include "BleComboAbs.h"
 WebServer server(80);
 WiFiManager wm;
+bool debugOutput = false;
+bool batteryEnabled = false;
+int batteryPin = -1;
+unsigned long batteryLastRead = 0;
+int lastBatteryPercent = -1;
+const unsigned long BATTERY_READ_INTERVAL = 60000;
+BleComboAbs bleCombo;
+
+template <typename T>
+void debugPrint(const T& value) {
+  if (debugOutput) {
+    Serial.print(value);
+  }
+}
+
+template <typename T>
+void debugPrintln(const T& value) {
+  if (debugOutput) {
+    Serial.println(value);
+  }
+}
+
+float readBatteryVoltage() {
+  if (batteryPin < 0) {
+    return -1.0f;
+  }
+  const int samples = 16;
+  uint32_t mv = 0;
+  for (int i = 0; i < samples; i++) {
+    mv += analogReadMilliVolts(batteryPin);
+  }
+  float v = (mv / (float)samples) / 1000.0f;
+  return v * 2.0f; // 1/2 divider
+}
+
+int batteryPercentFromVoltage(float v) {
+  struct Point { float v; int p; };
+  const Point points[] = {
+    {2.5f, 0},
+    {3.0f, 5},
+    {3.2f, 8},
+    {3.3f, 15},
+    {3.4f, 25},
+    {3.5f, 35},
+    {3.6f, 45},
+    {3.7f, 55},
+    {3.8f, 70},
+    {3.9f, 80},
+    {4.0f, 90},
+    {4.1f, 95},
+    {4.2f, 100}
+  };
+  if (v <= points[0].v) return points[0].p;
+  const int count = sizeof(points) / sizeof(points[0]);
+  if (v >= points[count - 1].v) return points[count - 1].p;
+  for (int i = 0; i < count - 1; i++) {
+    if (v >= points[i].v && v <= points[i + 1].v) {
+      float t = (v - points[i].v) / (points[i + 1].v - points[i].v);
+      return (int)(points[i].p + t * (points[i + 1].p - points[i].p));
+    }
+  }
+  return 0;
+}
+
+void updateBatteryLevel(bool force = false) {
+  if (!batteryEnabled || batteryPin < 0) {
+    return;
+  }
+  float v = readBatteryVoltage();
+  if (v <= 0.0f) {
+    return;
+  }
+  int percent = batteryPercentFromVoltage(v);
+  if (force || percent != lastBatteryPercent) {
+    bleCombo.setBatteryLevel((uint8_t)percent);
+    lastBatteryPercent = percent;
+    debugPrint("[DEBUG] Battery V=");
+    debugPrint(v);
+    debugPrint(" -> ");
+    debugPrint(percent);
+    debugPrintln("%");
+  }
+}
 
 // Hilfsfunktion: config.json als String laden
 String loadConfigString() {
@@ -22,7 +105,6 @@ String loadConfigString() {
   File file = LittleFS.open("/config.json", "r");
   if (!file) return "{}";
   String content = file.readString();
-  file.close();
   return content;
 }
 
@@ -63,12 +145,19 @@ const char* configEditorHTML = R"rawliteral(
   <label>WLAN Passwort: <input id='wifi_pass' name='wifi_pass' type='password'></label>
   <label>Doppelklick-Zeit (ms): <input id='doubleClickTime' name='doubleClickTime' type='number'></label>
   <label>Langklick-Zeit (ms): <input id='longPressTime' name='longPressTime' type='number'></label>
+  <label>Battery aktiv: <input id='battery_enabled' name='battery_enabled' type='checkbox'></label>
+  <label>Battery Pin: <input id='battery_pin' name='battery_pin' type='number'></label>
   <label>BLE LED Pin: <input id='ble_led_pin' name='ble_led_pin' type='number'></label>
   <label>BLE LED invertieren: <input id='ble_led_invert' name='ble_led_invert' type='checkbox'></label>
+  <label>Debug Ausgabe: <input id='debug_ble' name='debug_ble' type='checkbox'></label>
 
   <h3>Buttons</h3>
   <div id='button-list' class='button-list'></div>
   <button type='button' class='add-btn' onclick='addButton()'>Button hinzufügen</button>
+
+  <h3>Mouse Actions</h3>
+  <div id='mouse-action-list' class='button-list'></div>
+  <button type='button' class='add-btn' onclick='addMouseAction()'>Mouse Action hinzufügen</button>
   <br><br>
   <button type='submit'>Speichern</button>
 </form>
@@ -76,6 +165,7 @@ const char* configEditorHTML = R"rawliteral(
 <script>
 let config = {};
 let buttonList = document.getElementById('button-list');
+let mouseActionList = document.getElementById('mouse-action-list');
 
 function renderButtons() {
   buttonList.innerHTML = '';
@@ -100,6 +190,22 @@ function renderButtons() {
   });
 }
 
+function renderMouseActions() {
+  mouseActionList.innerHTML = '';
+  config.mouse_actions.forEach((action, idx) => {
+    let div = document.createElement('div');
+    div.className = 'button-entry';
+    div.innerHTML = `
+      <button type='button' class='remove-btn' onclick='removeMouseAction(${idx})'>Entfernen</button>
+      <b>Mouse Action ${idx+1}</b><br>
+      Name: <input value='${action.name||""}' onchange='updateMouseAction(${idx},"name",this.value)'>
+      X: <input type='number' value='${action.x||0}' onchange='updateMouseAction(${idx},"x",this.value)'>
+      Y: <input type='number' value='${action.y||0}' onchange='updateMouseAction(${idx},"y",this.value)'>
+    `;
+    mouseActionList.appendChild(div);
+  });
+}
+
 function updateButton(idx, key, value) {
   if(key=="pin"||key=="debounce") value = parseInt(value)||0;
   config.buttons[idx][key] = value;
@@ -114,15 +220,31 @@ function removeButton(idx) {
   config.buttons.splice(idx,1);
   renderButtons();
 }
+function updateMouseAction(idx, key, value) {
+  if (key=="x"||key=="y") value = parseInt(value)||0;
+  config.mouse_actions[idx][key] = value;
+}
+function addMouseAction() {
+  config.mouse_actions.push({name:"",x:0,y:0});
+  renderMouseActions();
+}
+function removeMouseAction(idx) {
+  config.mouse_actions.splice(idx,1);
+  renderMouseActions();
+}
 function fillForm() {
   document.getElementById('ble_name').value = config.ble_name||'';
   document.getElementById('wifi_ssid').value = config.wifi_ssid||'';
   document.getElementById('wifi_pass').value = config.wifi_pass||'';
   document.getElementById('doubleClickTime').value = config.doubleClickTime||400;
   document.getElementById('longPressTime').value = config.longPressTime||800;
+  document.getElementById('battery_enabled').checked = !!config.battery_enabled;
+  document.getElementById('battery_pin').value = config.battery_pin||'';
   document.getElementById('ble_led_pin').value = config.ble_led_pin||'';
   document.getElementById('ble_led_invert').checked = !!config.ble_led_invert;
+  document.getElementById('debug_ble').checked = !!config.debug_ble;
   renderButtons();
+  renderMouseActions();
 }
 function saveCfg() {
   config.ble_name = document.getElementById('ble_name').value;
@@ -130,8 +252,11 @@ function saveCfg() {
   config.wifi_pass = document.getElementById('wifi_pass').value;
   config.doubleClickTime = parseInt(document.getElementById('doubleClickTime').value)||400;
   config.longPressTime = parseInt(document.getElementById('longPressTime').value)||800;
+  config.battery_enabled = document.getElementById('battery_enabled').checked;
+  config.battery_pin = parseInt(document.getElementById('battery_pin').value)||-1;
   config.ble_led_pin = parseInt(document.getElementById('ble_led_pin').value)||-1;
   config.ble_led_invert = document.getElementById('ble_led_invert').checked;
+  config.debug_ble = document.getElementById('debug_ble').checked;
   fetch('/save', {method:'POST', body:JSON.stringify(config)}).then(r=>r.text()).then(t=>{
     msg.innerText = t;
     setTimeout(() => {
@@ -141,7 +266,12 @@ function saveCfg() {
     }, 500);
   });
 }
-fetch('/config.json').then(r=>r.json()).then(j=>{config=j;if(!config.buttons)config.buttons=[];fillForm();});
+fetch('/config.json').then(r=>r.json()).then(j=>{
+  config=j;
+  if(!config.buttons)config.buttons=[];
+  if(!config.mouse_actions)config.mouse_actions=[];
+  fillForm();
+});
 </script>
 </body></html>
 )rawliteral";
@@ -150,9 +280,9 @@ fetch('/config.json').then(r=>r.json()).then(j=>{config=j;if(!config.buttons)con
 enum ButtonState { BTN_IDLE, BTN_DEBOUNCE, BTN_PRESSED, BTN_WAIT_DOUBLE, BTN_LONG, BTN_RELEASED };
 struct ButtonConfig {
   int pin;
-  char key_normal;
-  char key_double;
-  char key_long;
+  String key_normal;
+  String key_double;
+  String key_long;
   String mode;
   int debounce;
   int lastState;
@@ -167,7 +297,14 @@ int buttonCount = 0;
 String bleName = "ESP32 Keyboard";
 String wifiSSID = "";
 String wifiPASS = "";
-BleKeyboard bleKeyboard;
+
+struct MouseAction {
+  String name;
+  int x;
+  int y;
+};
+MouseAction mouseActions[8];
+int mouseActionCount = 0;
 
 // Globale Zeiten für Doppelklick und Langklick
 unsigned long doubleClickTime = 400; // ms
@@ -175,25 +312,26 @@ unsigned long longPressTime = 800; // ms
 
 int bleLedPin = -1;
 bool bleLedInvert = false;
+void executeMouseAction(const String& actionName);
 void loadConfig() {
-    Serial.print("[DEBUG] WLAN SSID: ");
-    Serial.println(wifiSSID);
-    Serial.print("[DEBUG] WLAN PASS: ");
-    Serial.println(wifiPASS.length() > 0 ? "(gesetzt)" : "(leer)");
+    debugPrint("[DEBUG] WLAN SSID: ");
+    debugPrintln(wifiSSID);
+    debugPrint("[DEBUG] WLAN PASS: ");
+    debugPrintln(wifiPASS.length() > 0 ? "(gesetzt)" : "(leer)");
   if (!LittleFS.begin(true)) {
-    Serial.println("[DEBUG] LittleFS konnte nicht initialisiert werden!");
+    debugPrintln("[DEBUG] LittleFS konnte nicht initialisiert werden!");
     return;
   }
   File file = LittleFS.open("/config.json");
   if (!file) {
-    Serial.println("[DEBUG] /config.json konnte nicht geöffnet werden!");
+    debugPrintln("[DEBUG] /config.json konnte nicht geöffnet werden!");
     return;
   }
   StaticJsonDocument<1024> doc;
   DeserializationError err = deserializeJson(doc, file);
   if (err) {
-    Serial.print("[DEBUG] Fehler beim Parsen von config.json: ");
-    Serial.println(err.c_str());
+    debugPrint("[DEBUG] Fehler beim Parsen von config.json: ");
+    debugPrintln(err.c_str());
     return;
   }
   if (doc.containsKey("ble_name")) {
@@ -204,6 +342,16 @@ void loadConfig() {
   }
   if (doc.containsKey("longPressTime")) {
     longPressTime = doc["longPressTime"].as<unsigned long>();
+  }
+  if (doc.containsKey("battery_enabled")) {
+    batteryEnabled = doc["battery_enabled"].as<bool>();
+  } else {
+    batteryEnabled = false;
+  }
+  if (doc.containsKey("battery_pin")) {
+    batteryPin = doc["battery_pin"].as<int>();
+  } else {
+    batteryPin = -1;
   }
   if (doc.containsKey("wifi_ssid")) {
     wifiSSID = doc["wifi_ssid"].as<String>();
@@ -221,22 +369,26 @@ void loadConfig() {
   } else {
     bleLedInvert = false;
   }
+  if (doc.containsKey("debug_ble")) {
+    debugOutput = doc["debug_ble"].as<bool>();
+  } else {
+    debugOutput = false;
+  }
   buttonCount = doc["buttons"].size();
   for (int i = 0; i < buttonCount; i++) {
     buttons[i].pin = doc["buttons"][i]["pin"].as<int>();
-    // Neue Struktur: key_normal, key_double, key_long
     if (doc["buttons"][i].containsKey("key_normal"))
-      buttons[i].key_normal = doc["buttons"][i]["key_normal"].as<const char*>()[0];
+      buttons[i].key_normal = doc["buttons"][i]["key_normal"].as<String>();
     else if (doc["buttons"][i].containsKey("key"))
-      buttons[i].key_normal = doc["buttons"][i]["key"].as<const char*>()[0];
+      buttons[i].key_normal = doc["buttons"][i]["key"].as<String>();
     else
-      buttons[i].key_normal = 'A';
+      buttons[i].key_normal = "A";
     if (doc["buttons"][i].containsKey("key_double"))
-      buttons[i].key_double = doc["buttons"][i]["key_double"].as<const char*>()[0];
+      buttons[i].key_double = doc["buttons"][i]["key_double"].as<String>();
     else
       buttons[i].key_double = buttons[i].key_normal;
     if (doc["buttons"][i].containsKey("key_long"))
-      buttons[i].key_long = doc["buttons"][i]["key_long"].as<const char*>()[0];
+      buttons[i].key_long = doc["buttons"][i]["key_long"].as<String>();
     else
       buttons[i].key_long = buttons[i].key_normal;
     if (doc["buttons"][i].containsKey("mode")) {
@@ -256,41 +408,82 @@ void loadConfig() {
     buttons[i].state = BTN_IDLE;
     buttons[i].doubleClickPending = false;
   }
+
+  // Mausaktionen laden
+  mouseActionCount = 0;
+  if (doc.containsKey("mouse_actions")) {
+    JsonArray arr = doc["mouse_actions"].as<JsonArray>();
+    for (JsonObject obj : arr) {
+      if (mouseActionCount < 8) {
+        mouseActions[mouseActionCount].name = obj["name"].as<String>();
+        mouseActions[mouseActionCount].x = obj["x"].as<int>();
+        mouseActions[mouseActionCount].y = obj["y"].as<int>();
+        mouseActionCount++;
+      }
+    }
+  }
+
   file.close();
-  Serial.println("[DEBUG] Geladene Konfiguration:");
-  Serial.print("[DEBUG] BLE-Name: ");
-  Serial.println(bleName);
-  Serial.print("[DEBUG] ButtonCount: ");
-  Serial.println(buttonCount);
+  debugPrintln("[DEBUG] Geladene Konfiguration:");
+  debugPrint("[DEBUG] BLE-Name: ");
+  debugPrintln(bleName);
+  debugPrint("[DEBUG] ButtonCount: ");
+  debugPrintln(buttonCount);
   for (int i = 0; i < buttonCount; i++) {
-    Serial.print("[DEBUG] Button ");
-    Serial.print(i);
-    Serial.print(": Pin ");
-    Serial.print(buttons[i].pin);
-    Serial.print(", Key_normal '");
-    Serial.print(buttons[i].key_normal);
-    Serial.print("', Key_double '");
-    Serial.print(buttons[i].key_double);
-    Serial.print("', Key_long '");
-    Serial.print(buttons[i].key_long);
-    Serial.print("', Mode: ");
-    Serial.println(buttons[i].mode);
+    debugPrint("[DEBUG] Button ");
+    debugPrint(i);
+    debugPrint(": Pin ");
+    debugPrint(buttons[i].pin);
+    debugPrint(", Key_normal '");
+    debugPrint(buttons[i].key_normal);
+    debugPrint("', Key_double '");
+    debugPrint(buttons[i].key_double);
+    debugPrint("', Key_long '");
+    debugPrint(buttons[i].key_long);
+    debugPrint("', Mode: ");
+    debugPrintln(buttons[i].mode);
+  }
+}
+
+// Hilfsfunktion: Mausaktion ausführen
+void executeMouseAction(const String& actionName) {
+  for (int i = 0; i < mouseActionCount; i++) {
+    if (mouseActions[i].name == actionName) {
+      int mx = mouseActions[i].x;
+      int my = mouseActions[i].y;
+      if (!bleCombo.isConnected()) {
+        debugPrintln("[DEBUG] BLE nicht verbunden, Aktion ignoriert");
+        return;
+      }
+      if (mx < 0) mx = 0;
+      if (my < 0) my = 0;
+      if (mx > 10000) mx = 10000;
+      if (my > 10000) my = 10000;
+      debugPrint("[DEBUG] Abs Mouse action: ");
+      debugPrint(actionName);
+      debugPrint(" x=");
+      debugPrint(mx);
+      debugPrint(" y=");
+      debugPrintln(my);
+      bleCombo.clickAbs(mx, my);
+      return;
+    }
   }
 }
 
 void setup() {
     Serial.begin(115200);
     delay(5000); // Warte auf Serial-Port Initialisierung
-    Serial.println("[DEBUG] setup() gestartet");
-    Serial.println("[DEBUG] Serial initialisiert");
+    debugPrintln("[DEBUG] setup() gestartet");
+    debugPrintln("[DEBUG] Serial initialisiert");
     // Captive Portal starten, falls kein WLAN konfiguriert
     loadConfig();
     bool wifiConnected = false;
     if (wifiSSID.length() > 0) {
       WiFi.mode(WIFI_STA);
       WiFi.begin(wifiSSID.c_str(), wifiPASS.c_str());
-      Serial.print("[DEBUG] Verbinde mit WLAN: ");
-      Serial.println(wifiSSID);
+      debugPrint("[DEBUG] Verbinde mit WLAN: ");
+      debugPrintln(wifiSSID);
       unsigned long startAttempt = millis();
       while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 15000) {
         delay(500);
@@ -298,41 +491,41 @@ void setup() {
       }
       Serial.println();
       if (WiFi.status() == WL_CONNECTED) {
-        Serial.print("[DEBUG] WLAN-Verbindung erfolgreich! IP: ");
+        Serial.print("WLAN-Verbindung erfolgreich! IP: ");
         Serial.println(WiFi.localIP());
       } else {
-        Serial.println("[DEBUG] WLAN-Verbindung fehlgeschlagen!");
+        Serial.println("WLAN-Verbindung fehlgeschlagen!");
       }
       wifiConnected = (WiFi.status() == WL_CONNECTED);
     }
     if (!wifiConnected) {
-      Serial.println("[DEBUG] Keine WLAN-Verbindung, Captive Portal aktiv!");
+      Serial.print("Keine WLAN-Verbindung, Captive Portal aktiv!");
       WiFi.mode(WIFI_AP);
       bool ap = WiFi.softAP("Keypad-Config");
-      Serial.print("[DEBUG] Access Point gestartet: ");
+      Serial.print("Access Point gestartet: ");
       Serial.println(ap ? "OK" : "Fehler");
-      Serial.print("[DEBUG] AP-IP: ");
+      Serial.print("AP-IP: ");
       Serial.println(WiFi.softAPIP());
       // Webserver Endpunkte
       server.on("/", []() {
         lastWebRequestTime = millis();
-        Serial.println("[DEBUG] HTTP GET /");
+        debugPrintln("[DEBUG] HTTP GET /");
         server.send(200, "text/html", configEditorHTML);
       });
       server.on("/config.json", []() {
         lastWebRequestTime = millis();
-        Serial.println("[DEBUG] HTTP GET /config.json");
+        debugPrintln("[DEBUG] HTTP GET /config.json");
         server.send(200, "application/json", loadConfigString());
       });
       server.on("/save", HTTP_POST, []() {
         lastWebRequestTime = millis();
-        Serial.println("[DEBUG] HTTP POST /save");
+        debugPrintln("[DEBUG] HTTP POST /save");
         String body = server.arg("plain");
         if (saveConfigString(body)) {
-          Serial.println("[DEBUG] config.json gespeichert!");
+          debugPrintln("[DEBUG] config.json gespeichert!");
           server.send(200, "text/plain", "Gespeichert!");
         } else {
-          Serial.println("[DEBUG] Fehler beim Speichern von config.json!");
+          debugPrintln("[DEBUG] Fehler beim Speichern von config.json!");
           server.send(500, "text/plain", "Fehler beim Speichern!");
         }
       });
@@ -340,30 +533,30 @@ void setup() {
       webserverStartTime = millis();
       lastWebRequestTime = millis();
       webserverActive = true;
-      Serial.println("[DEBUG] Webserver gestartet (Port 80)");
+      Serial.println("Webserver gestartet (Port 80)");
     } else {
-      Serial.print("[DEBUG] WLAN verbunden: ");
+      Serial.print("WLAN verbunden: ");
       Serial.println(WiFi.localIP());
       // Webserver für lokale Bearbeitung (optional)
       server.on("/", []() {
         lastWebRequestTime = millis();
-        Serial.println("[DEBUG] HTTP GET /");
+        debugPrintln("[DEBUG] HTTP GET /");
         server.send(200, "text/html", configEditorHTML);
       });
       server.on("/config.json", []() {
         lastWebRequestTime = millis();
-        Serial.println("[DEBUG] HTTP GET /config.json");
+        debugPrintln("[DEBUG] HTTP GET /config.json");
         server.send(200, "application/json", loadConfigString());
       });
       server.on("/save", HTTP_POST, []() {
         lastWebRequestTime = millis();
-        Serial.println("[DEBUG] HTTP POST /save");
+        debugPrintln("[DEBUG] HTTP POST /save");
         String body = server.arg("plain");
         if (saveConfigString(body)) {
-          Serial.println("[DEBUG] config.json gespeichert!");
+          debugPrintln("[DEBUG] config.json gespeichert!");
           server.send(200, "text/plain", "Gespeichert!");
         } else {
-          Serial.println("[DEBUG] Fehler beim Speichern von config.json!");
+          debugPrintln("[DEBUG] Fehler beim Speichern von config.json!");
           server.send(500, "text/plain", "Fehler beim Speichern!");
         }
       });
@@ -371,59 +564,66 @@ void setup() {
       webserverStartTime = millis();
       lastWebRequestTime = millis();
       webserverActive = true;
-      Serial.println("[DEBUG] Webserver gestartet (Port 80)");
+      debugPrintln("[DEBUG] Webserver gestartet (Port 80)");
     }
   //pinMode(8, OUTPUT);
   Serial.begin(115200);
   delay(5000); // Warte auf Serial-Port Initialisierung
-  Serial.println("[DEBUG] setup() gestartet");
-  Serial.println("[DEBUG] Serial initialisiert");
+  debugPrintln("[DEBUG] setup() gestartet");
+  debugPrintln("[DEBUG] Serial initialisiert");
   loadConfig();
-  Serial.println("[DEBUG] Konfiguration geladen");
+  debugPrintln("[DEBUG] Konfiguration geladen");
   for (int i = 0; i < buttonCount; i++) {
-    Serial.print("Init Button ");
-    Serial.print(i);
-    Serial.print(": Pin ");
-    Serial.print(buttons[i].pin);
-    Serial.print(", Key_normal '");
-    Serial.print(buttons[i].key_normal);
-    Serial.print("', Key_double '");
-    Serial.print(buttons[i].key_double);
-    Serial.print("', Key_long '");
-    Serial.print(buttons[i].key_long);
-    Serial.print("', Mode: ");
-    Serial.print(buttons[i].mode);
-    Serial.print(", Debounce: ");
-    Serial.println(buttons[i].debounce);
+    debugPrint("Init Button ");
+    debugPrint(i);
+    debugPrint(": Pin ");
+    debugPrint(buttons[i].pin);
+    debugPrint(", Key_normal '");
+    debugPrint(buttons[i].key_normal);
+    debugPrint("', Key_double '");
+    debugPrint(buttons[i].key_double);
+    debugPrint("', Key_long '");
+    debugPrint(buttons[i].key_long);
+    debugPrint("', Mode: ");
+    debugPrint(buttons[i].mode);
+    debugPrint(", Debounce: ");
+    debugPrintln(buttons[i].debounce);
     if (buttons[i].pin < 0 || buttons[i].pin > 39) {
-      Serial.print("Warnung: Ungültiger GPIO: ");
-      Serial.println(buttons[i].pin);
+      debugPrint("Warnung: Ungültiger GPIO: ");
+      debugPrintln(buttons[i].pin);
       continue;
     }
     if (buttons[i].mode == "pullup") {
       pinMode(buttons[i].pin, INPUT_PULLUP);
-      Serial.println("[DEBUG] pinMode INPUT_PULLUP gesetzt");
+      debugPrintln("[DEBUG] pinMode INPUT_PULLUP gesetzt");
     } else if (buttons[i].mode == "pulldown") {
       pinMode(buttons[i].pin, INPUT_PULLDOWN);
-      Serial.println("[DEBUG] pinMode INPUT_PULLDOWN gesetzt");
+      debugPrintln("[DEBUG] pinMode INPUT_PULLDOWN gesetzt");
     } else {
       pinMode(buttons[i].pin, INPUT);
-      Serial.println("[DEBUG] pinMode INPUT gesetzt");
+      debugPrintln("[DEBUG] pinMode INPUT gesetzt");
     }
   }
-  Serial.println("[DEBUG] Alle Pins initialisiert");
+  debugPrintln("[DEBUG] Alle Pins initialisiert");
   if (bleLedPin >= 0 && bleLedPin <= 39) {
     pinMode(bleLedPin, OUTPUT);
     digitalWrite(bleLedPin, bleLedInvert ? HIGH : LOW);
-    Serial.print("[DEBUG] BLE LED Pin initialisiert: ");
-    Serial.println(bleLedPin);
-    Serial.print("[DEBUG] BLE LED invertiert: ");
-    Serial.println(bleLedInvert ? "true" : "false");
+    debugPrint("[DEBUG] BLE LED Pin initialisiert: ");
+    debugPrintln(bleLedPin);
+    debugPrint("[DEBUG] BLE LED invertiert: ");
+    debugPrintln(bleLedInvert ? "true" : "false");
   }
-  bleKeyboard.setName(bleName.c_str());
-  Serial.println("[DEBUG] BLE-Name gesetzt");
-  bleKeyboard.begin();
-  Serial.println("[DEBUG] BLE Keyboard gestartet");
+  if (batteryEnabled && batteryPin >= 0) {
+    pinMode(batteryPin, INPUT);
+    debugPrint("[DEBUG] Battery Pin initialisiert: ");
+    debugPrintln(batteryPin);
+  }
+  bleCombo.setName(bleName.c_str());
+  bleCombo.setDebug(debugOutput);
+  debugPrintln("[DEBUG] BLE-Name gesetzt");
+  bleCombo.begin();
+  updateBatteryLevel(true);
+  debugPrintln("[DEBUG] BLE Keyboard und Abs Mouse gestartet");
   Serial.print("Tastatur-Emulator gestartet (BLE-Modus, Name: ");
   Serial.print(bleName);
   Serial.println(")");
@@ -439,7 +639,7 @@ void loop() {
       server.handleClient();
       // Timeout prüfen
       if ((millis() - lastWebRequestTime > WEBSERVER_TIMEOUT) && (millis() - webserverStartTime > WEBSERVER_TIMEOUT)) {
-        Serial.println("[DEBUG] Webserver Timeout, stoppe Webserver und Access Point!");
+        debugPrintln("[DEBUG] Webserver Timeout, stoppe Webserver und Access Point!");
         server.stop();
         WiFi.softAPdisconnect(true);
         webserverActive = false;
@@ -448,11 +648,12 @@ void loop() {
 
   unsigned long now = millis();
   // Bluetooth LED Status blinken
+  bool bleConnected = bleCombo.isConnected();
   if (bleLedPin >= 0 && bleLedPin <= 39) {
     auto ledWrite = [&](bool on) {
       digitalWrite(bleLedPin, bleLedInvert ? !on : on);
     };
-    if (bleKeyboard.isConnected()) {
+    if (bleConnected) {
       ledWrite(true); // LED dauerhaft an bei Verbindung
       bleWasConnected = true;
       bleFastBlinkActive = false;
@@ -479,10 +680,9 @@ void loop() {
       }
     }
   }
-  if (bleKeyboard.isConnected()) {
-    for (int i = 0; i < buttonCount; i++) {
-      int pinState = digitalRead(buttons[i].pin);
-      switch (buttons[i].state) {
+  for (int i = 0; i < buttonCount; i++) {
+    int pinState = digitalRead(buttons[i].pin);
+    switch (buttons[i].state) {
         case BTN_IDLE:
           if (pinState == LOW) {
             buttons[i].state = BTN_DEBOUNCE;
@@ -502,11 +702,24 @@ void loop() {
             // Button wurde kurz gedrückt
             if (buttons[i].doubleClickPending && (now - buttons[i].lastRelease < doubleClickTime)) {
               // Doppelklick erkannt
-              Serial.print("-> Doppelklick: ");
-              Serial.println(buttons[i].key_double);
-              bleKeyboard.press(buttons[i].key_double);
-              delay(100);
-              bleKeyboard.release(buttons[i].key_double);
+              debugPrint("-> Doppelklick: ");
+              debugPrintln(buttons[i].key_double);
+              String doubleName = buttons[i].key_double;
+              bool mouseDone = false;
+              for (int m = 0; m < mouseActionCount; m++) {
+                if (mouseActions[m].name == doubleName) {
+                  executeMouseAction(doubleName);
+                  mouseDone = true;
+                  break;
+                }
+              }
+              if (!mouseDone && bleConnected) {
+                Serial.print("Keyboard double key: ");
+                Serial.println(buttons[i].key_double);
+                bleCombo.press((uint8_t)buttons[i].key_double[0]);
+                delay(100);
+                bleCombo.release((uint8_t)buttons[i].key_double[0]);
+              }
               buttons[i].doubleClickPending = false;
               buttons[i].state = BTN_IDLE;
             } else {
@@ -519,9 +732,22 @@ void loop() {
             // Langklick erkannt
             Serial.print("-> Langklick: ");
             Serial.println(buttons[i].key_long);
-            bleKeyboard.press(buttons[i].key_long);
-            delay(100);
-            bleKeyboard.release(buttons[i].key_long);
+            String longName = buttons[i].key_long;
+            bool mouseDone = false;
+            for (int m = 0; m < mouseActionCount; m++) {
+              if (mouseActions[m].name == longName) {
+                executeMouseAction(longName);
+                mouseDone = true;
+                break;
+              }
+            }
+            if (!mouseDone && bleConnected) {
+              Serial.print("[DEBUG] Keyboard long key: ");
+              Serial.println(buttons[i].key_long);
+              bleCombo.press((uint8_t)buttons[i].key_long[0]);
+              delay(100);
+              bleCombo.release((uint8_t)buttons[i].key_long[0]);
+            }
             buttons[i].doubleClickPending = false;
             buttons[i].state = BTN_LONG;
           }
@@ -534,9 +760,22 @@ void loop() {
             // Zeit abgelaufen, Normalklick
             Serial.print("-> Normalklick: ");
             Serial.println(buttons[i].key_normal);
-            bleKeyboard.press(buttons[i].key_normal);
-            delay(100);
-            bleKeyboard.release(buttons[i].key_normal);
+            String normalName = buttons[i].key_normal;
+            bool mouseDone = false;
+            for (int m = 0; m < mouseActionCount; m++) {
+              if (mouseActions[m].name == normalName) {
+                executeMouseAction(normalName);
+                mouseDone = true;
+                break;
+              }
+            }
+            if (!mouseDone && bleConnected) {
+              Serial.print("Keyboard normal key: ");
+              Serial.println(buttons[i].key_normal);
+              bleCombo.press((uint8_t)buttons[i].key_normal[0]);
+              delay(100);
+              bleCombo.release((uint8_t)buttons[i].key_normal[0]);
+            }
             buttons[i].doubleClickPending = false;
             buttons[i].state = BTN_IDLE;
           }
@@ -550,7 +789,13 @@ void loop() {
           buttons[i].state = BTN_IDLE;
           break;
       }
-      buttons[i].lastState = pinState;
+    buttons[i].lastState = pinState;
+  }
+
+  if (batteryEnabled && batteryPin >= 0) {
+    if (now - batteryLastRead > BATTERY_READ_INTERVAL) {
+      batteryLastRead = now;
+      updateBatteryLevel(false);
     }
   }
 }
