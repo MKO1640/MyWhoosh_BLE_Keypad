@@ -10,14 +10,14 @@
    "ble_led_pin": 10,
    "ble_led_invert": true,
    "buttons": [
-      { "pin": 7, "key_normal": "I", "key_double": "1", "key_long": "MouseMove1", "mode": "pullup", "debounce": 100 },
-      { "pin": 4, "key_normal": "K", "key_double": "2", "key_long": "MouseMove2", "mode": "pullup", "debounce": 100 },
-      { "pin": 5, "key_normal": "A", "key_double": "3", "key_long": "MouseMove3", "mode": "pullup", "debounce": 100 },
-      { "pin": 6, "key_normal": "D", "key_double": "4", "key_long": "MouseMove1", "mode": "pullup", "debounce": 100 }
+      { "pin": 7, "key_normal": "I", "key_double": "1", "key_long": "AbbiegenLinks", "mode": "pullup", "debounce": 100 },
+      { "pin": 4, "key_normal": "K", "key_double": "2", "key_long": "AbbiegenRechts", "mode": "pullup", "debounce": 100 },
+      { "pin": 5, "key_normal": "A", "key_double": "3", "key_long": "U-Turn", "mode": "pullup", "debounce": 100 },
+      { "pin": 6, "key_normal": "D", "key_double": "4", "key_long": "U", "mode": "pullup", "debounce": 100 }
    ],
    "mouse_actions": [
-      { "name": "MouseMove1", "x": 2000, "y": 5000 },
-      { "name": "MouseMove2", "x": 5000, "y": 2000 },
-      { "name": "MouseMove3", "x": 8000, "y": 8000 }
+      { "name": "AbbiegenLinks", "x": 4250, "y": 7164 },
+      { "name": "AbbiegenRechts", "x": 5250, "y": 1164 },
+      { "name": "U-Turn", "x": 5000, "y": 9402 }
    ]
 }

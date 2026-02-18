@@ -1,6 +1,7 @@
-# MyWhoosh ESP32 BLE Keypad für MYWhoosh Rollentrainer
+# MyWhoosh ESP32 Bluetoth Keypad & Touch Simulator für MYWhoosh Rollentrainer
 
-Dieses Projekt implementiert ein BLE-Keypad auf Basis eines ESP32/ESP32-C3, um den Rollentrainer in der MYWhoosh-App komfortabel zu steuern. Es können pro Taste drei verschiedene Aktionen (Normalklick, Doppelklick, Langklick) ausgeführt werden. Die Tastenbelegung und Klickzeiten sind flexibel über eine Konfigurationsdatei anpassbar.
+Dieses Projekt implementiert ein BLE-Keypad und ein ble-Digitizer auf Basis eines ESP32/ESP32-C3, um den Rollentrainer in der MYWhoosh-App komfortabel zu steuern. Es können pro Taste drei verschiedene Aktionen (Normalklick, Doppelklick, Langklick) ausgeführt werden. Die Tastenbelegung und Klickzeiten sind flexibel über eine Konfigurationsdatei oder Webiterface anpassbar.
+
 
 ## Features
 
@@ -13,9 +14,9 @@ Dieses Projekt implementiert ein BLE-Keypad auf Basis eines ESP32/ESP32-C3, um d
 - **Einfache Anpassung**: Keine Programmierkenntnisse für Tastenbelegung nötig
 
 ## Hardware
-- ESP32 oder ESP32-C3 Devboard
+- ESP32 oder ESP32-C3 oder den Seeed Studio XIAO ESP32c3 (empfohlen für Akkubetrieb)
 - Taster (beliebige Anzahl, empfohlen: 4–12)
-- Optional: Gehäuse, Pullup/Pulldown-Widerstände
+- Optional: Gehäuse, Pullup/Pulldown-Widerstände 3D Druckdateien im Projekt enthalten.
 
 ## Installation & Inbetriebnahme
 
@@ -26,7 +27,7 @@ Dieses Projekt implementiert ein BLE-Keypad auf Basis eines ESP32/ESP32-C3, um d
    ```
 2. **PlatformIO installieren** (VS Code empfohlen)
 3. **Board auswählen**
-   - In `platformio.ini` das passende Board setzen (`esp32dev` oder `esp32-c3-devkitm-1`)
+   - In `platformio.ini` unter `default_envs =` das passende Board setzen (`esp32` , `esp32-c3-supermini` oder `seeed_xiao_esp32c3` )
 4. **Firmware & Dateisystem hochladen**
    ```sh
    pio run --target uploadfs
@@ -45,7 +46,7 @@ Dieses Projekt implementiert ein BLE-Keypad auf Basis eines ESP32/ESP32-C3, um d
 
 ## Web-Konfiguration & config.json
 
-Die Konfiguration erfolgt komfortabel über das Web-Interface (siehe oben). Alternativ kann die Datei `data/config.json` direkt bearbeitet werden.
+Die Konfiguration erfolgt komfortabel über das Web-Interface (siehe oben). Alternativ kann die Datei `data/config.json` direkt bearbeitet werden. Zum hochladen der `data/config.json` muß nicht wieder neu compiled werden. im Terminal reicht ein erneutes `platformio run --target uploadfs`.
 
 Beispiel für `config.json`:
 ```json
