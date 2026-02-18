@@ -4,10 +4,18 @@
    "wifi_pass": "DEIN_PASSWORT",
    "doubleClickTime": 400,
    "longPressTime": 800,
+   "battery_enabled": false,
+   "battery_pin": -1,
+   "debug_ble": false,
+   "ble_led_pin": -1,
+   "ble_led_invert": false,
    "buttons": [
       { "pin": 1, "key_normal": "I", "key_double": "1", "key_long": "5", "mode": "pullup", "debounce": 100 },
       { "pin": 2, "key_normal": "K", "key_double": "2", "key_long": "6", "mode": "pullup", "debounce": 100 },
       { "pin": 3, "key_normal": "A", "key_double": "3", "key_long": "7", "mode": "pullup", "debounce": 100 },
       { "pin": 4, "key_normal": "D", "key_double": "4", "key_long": "U", "mode": "pullup", "debounce": 100 }
+   ],
+   "mouse_actions": [
+      { "name": "Mouse1", "x": 0, "y": 0 }
    ]
 }

@@ -4,6 +4,9 @@
   "wifi_pass": "DEIN_PASSWORT",
   "doubleClickTime": 400,
   "longPressTime": 800,
+  "battery_enabled": false,
+  "battery_pin": -1,
+  "debug_ble": false,
   "ble_led_pin": 8,
   "ble_led_invert": true,
   "buttons": [
@@ -13,8 +16,8 @@
     { "pin": 3, "key_normal": "D", "key_double": "4", "key_long": "U", "mode": "pullup", "debounce": 100 }
   ],
   "mouse_actions": [
-    { "name": "MouseMove1", "x": 10, "y": 0, "button": "left" },
-    { "name": "MouseMove2", "x": 0, "y": -10, "button": "right" },
-    { "name": "MouseMove3", "x": -5, "y": 5, "button": "middle" }
+    { "name": "MouseMove1", "x": 2000, "y": 5000 },
+    { "name": "MouseMove2", "x": 5000, "y": 2000 },
+    { "name": "MouseMove3", "x": 8000, "y": 8000 }
   ]
 }
