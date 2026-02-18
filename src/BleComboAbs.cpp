@@ -142,6 +142,7 @@ void BleComboAbs::begin(void)
   advertising = pServer->getAdvertising();
   advertising->setAppearance(HID_KEYBOARD);
   advertising->addServiceUUID(hid->hidService()->getUUID());
+  advertising->addServiceUUID(BLEUUID((uint16_t)0x180F));
   advertising->setScanResponse(false);
   advertising->start();
   hid->setBatteryLevel(batteryLevel);
@@ -487,6 +488,10 @@ bool BleComboAbs::isAbsPressed(void)
 void BleComboAbs::onConnect(BLEServer* pServer)
 {
   this->connected = true;
+
+  if (hid != 0) {
+    hid->setBatteryLevel(batteryLevel);
+  }
 
 #if !defined(USE_NIMBLE)
   BLE2902* desc = (BLE2902*)this->inputKeyboard->getDescriptorByUUID(BLEUUID((uint16_t)0x2902));

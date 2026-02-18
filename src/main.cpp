@@ -88,14 +88,16 @@ void updateBatteryLevel(bool force = false) {
     return;
   }
   int percent = batteryPercentFromVoltage(v);
+  if (debugOutput) {
+    Serial.print("[DEBUG] Battery V=");
+    Serial.print(v, 3);
+    Serial.print(" -> ");
+    Serial.print(percent);
+    Serial.println("%");
+  }
   if (force || percent != lastBatteryPercent) {
     bleCombo.setBatteryLevel((uint8_t)percent);
     lastBatteryPercent = percent;
-    debugPrint("[DEBUG] Battery V=");
-    debugPrint(v);
-    debugPrint(" -> ");
-    debugPrint(percent);
-    debugPrintln("%");
   }
 }
 

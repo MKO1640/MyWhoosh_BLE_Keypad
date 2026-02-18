@@ -5,12 +5,12 @@
    "doubleClickTime": 400,
    "longPressTime": 800,
    "battery_enabled": true,
-   "battery_pin": 2,
+   "battery_pin": 3,
    "debug_ble": true,
    "ble_led_pin": 10,
    "ble_led_invert": true,
    "buttons": [
-      { "pin": 3, "key_normal": "I", "key_double": "1", "key_long": "MouseMove1", "mode": "pullup", "debounce": 100 },
+      { "pin": 7, "key_normal": "I", "key_double": "1", "key_long": "MouseMove1", "mode": "pullup", "debounce": 100 },
       { "pin": 4, "key_normal": "K", "key_double": "2", "key_long": "MouseMove2", "mode": "pullup", "debounce": 100 },
       { "pin": 5, "key_normal": "A", "key_double": "3", "key_long": "MouseMove3", "mode": "pullup", "debounce": 100 },
       { "pin": 6, "key_normal": "D", "key_double": "4", "key_long": "MouseMove1", "mode": "pullup", "debounce": 100 }

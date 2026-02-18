@@ -79,6 +79,19 @@ Beispiel für `config.json`:
 - **buttons**: Liste der Tasten (GPIO, Keycodes, Modus, Entprellzeit)
 - **mouse_actions**: Aktionen fuer die BLE-Abs-Mouse (absolute Koordinaten 0..10000)
 
+**Konfiguration der BLE-Abs-Mouse**
+Die Abs-Mouse Aktionen werden ueber `mouse_actions` definiert und in den Buttons mit `key_long`, `key_double` oder `key_normal` referenziert. Der Eintrag `name` muss exakt mit dem Button-Wert uebereinstimmen. 
+
+Die Koordinaten `x` und `y` sind absolut und gehen von 0 bis 10000 (0,0 oben links; 10000,10000 unten rechts). Beispiel: `"key_long": "MouseMove1"` triggert die Aktion `{ "name": "MouseMove1", "x": 2000, "y": 5000 }`.
+
+Um exakte Werte fuer `x` und `y` zu berechnen, kannst du die Bildschirmmasse in mm verwenden:
+
+X = 10000 / Bildschirmbreite_mm * Punkt_Abstand_links_mm
+
+Y = 10000 / Bildschirmhoehe_mm * Punkt_Abstand_oben_mm
+
+Die Werte danach auf ganze Zahlen von 0 bis 10000 begrenzen.
+
 ## Tastenbelegung für MYWhoosh
 - Die Keycodes entsprechen den Tastaturbefehlen, die MYWhoosh akzeptiert (z.B. I, K, D, A, ...)
 - Jede Taste kann drei Aktionen auslösen (z.B. "key_normal": "I", "key_double": "J", "key_long": "L")
