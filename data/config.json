@@ -5,7 +5,8 @@
    "doubleClickTime": 400,
    "longPressTime": 800,
    "battery_enabled": true,
-   "battery_pin": 3,
+   "battery_pin": 2,
+   "battery_scale": 2,
    "debug_ble": true,
    "ble_led_pin": 10,
    "ble_led_invert": true,
@@ -17,7 +18,7 @@
    ],
    "mouse_actions": [
       { "name": "AbbiegenLinks", "x": 4250, "y": 7164 },
-      { "name": "AbbiegenRechts", "x": 5250, "y": 1164 },
+      { "name": "AbbiegenRechts", "x": 5250, "y": 7164 },
       { "name": "U-Turn", "x": 5000, "y": 9402 }
    ]
 }

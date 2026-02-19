@@ -18,6 +18,8 @@ WiFiManager wm;
 bool debugOutput = false;
 bool batteryEnabled = false;
 int batteryPin = -1;
+float batteryScale = 2.0f;
+uint32_t lastBatteryMv = 0;
 unsigned long batteryLastRead = 0;
 int lastBatteryPercent = -1;
 const unsigned long BATTERY_READ_INTERVAL = 60000;
@@ -42,12 +44,16 @@ float readBatteryVoltage() {
     return -1.0f;
   }
   const int samples = 16;
+  (void)analogReadMilliVolts(batteryPin); // dummy read to charge ADC sampling cap
+  delay(2);
   uint32_t mv = 0;
   for (int i = 0; i < samples; i++) {
     mv += analogReadMilliVolts(batteryPin);
+    delay(2);
   }
-  float v = (mv / (float)samples) / 1000.0f;
-  return v * 2.0f; // 1/2 divider
+  lastBatteryMv = (uint32_t)(mv / samples);
+  float v = (lastBatteryMv / 1000.0f);
+  return v * batteryScale;
 }
 
 int batteryPercentFromVoltage(float v) {
@@ -89,7 +95,9 @@ void updateBatteryLevel(bool force = false) {
   }
   int percent = batteryPercentFromVoltage(v);
   if (debugOutput) {
-    Serial.print("[DEBUG] Battery V=");
+    Serial.print("[DEBUG] Battery raw=");
+    Serial.print(lastBatteryMv);
+    Serial.print("mV, V=");
     Serial.print(v, 3);
     Serial.print(" -> ");
     Serial.print(percent);
@@ -355,6 +363,12 @@ void loadConfig() {
   } else {
     batteryPin = -1;
   }
+  if (doc.containsKey("battery_scale")) {
+    float scale = doc["battery_scale"].as<float>();
+    if (scale > 0.0f) {
+      batteryScale = scale;
+    }
+  }
   if (doc.containsKey("wifi_ssid")) {
     wifiSSID = doc["wifi_ssid"].as<String>();
   }
@@ -617,6 +631,9 @@ void setup() {
   }
   if (batteryEnabled && batteryPin >= 0) {
     pinMode(batteryPin, INPUT);
+    analogReadResolution(12);
+    analogSetPinAttenuation(batteryPin, ADC_11db);
+    adcAttachPin(batteryPin);
     debugPrint("[DEBUG] Battery Pin initialisiert: ");
     debugPrintln(batteryPin);
   }
